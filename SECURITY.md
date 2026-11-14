@@ -4,8 +4,8 @@
 
 | Version | Supported |
 | --- | --- |
-| `0.1.x-beta` | ✅ |
-| Older | ❌ |
+| `0.2.x-beta` | ✅ |
+| `0.1.x-beta` | ❌ (please update) |
 
 RYZ ProjectUp is currently a beta. Security fixes will be shipped in the latest beta.
 
