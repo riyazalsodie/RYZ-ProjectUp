@@ -341,6 +341,14 @@ export const DriveConnectDialog: React.FC<DriveConnectDialogProps> = ({
               </p>
             </div>
 
+            <div className="flex items-start gap-2 rounded-xl border border-primary/15 bg-primary/[0.04] px-3 py-2.5">
+              <Cloud className="mt-0.5 h-3 w-3 shrink-0 text-primary/70" />
+              <p className="text-[9px] leading-relaxed text-neutral-500">
+                Already have a ProjectUp vault in this Drive? Your project list and snapshot history will be
+                restored automatically when you connect.
+              </p>
+            </div>
+
             <button
               type="button"
               onClick={() => setGuideOpen(true)}

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::models::{
     now_iso, AppSnapshot, BackupRecord, DriveStatus, DriveTokens, Project, ProjectStats,
-    ProjectView, PublicSettings, Settings,
+    ProjectView, PublicSettings, Settings, CloudVault,
 };
 use crate::store::Store;
 
@@ -94,7 +94,56 @@ impl AppState {
             backup_count: project_backups.len() as u32,
             total_backed_up_bytes,
             last_backup,
+            path_available: std::path::Path::new(&project.path).is_dir(),
         }
+    }
+
+    pub fn cloud_vault(&self) -> CloudVault {
+        let inner = self.lock();
+        CloudVault {
+            schema: 1,
+            app: "ryz-projectup".to_string(),
+            updated_at: now_iso(),
+            projects: inner.projects.clone(),
+            backups: inner.backups.clone(),
+        }
+    }
+
+    /// Merge a vault index downloaded from Drive. Matching IDs win locally;
+    /// everything new from another PC is appended.
+    pub fn merge_cloud_vault(&self, remote: CloudVault) -> Result<bool, String> {
+        if !remote.app.is_empty() && remote.app != "ryz-projectup" {
+            return Err("That Drive vault was created by a different application.".to_string());
+        }
+        if remote.schema > 1 {
+            return Err(
+                "That Drive vault was created by a newer version of ProjectUp. Update this app first."
+                    .to_string(),
+            );
+        }
+
+        let mut changed = false;
+        {
+            let mut inner = self.lock();
+            for project in remote.projects {
+                if !inner.projects.iter().any(|local| local.id == project.id) {
+                    inner.projects.push(project);
+                    changed = true;
+                }
+            }
+            for backup in remote.backups {
+                if !inner.backups.iter().any(|local| local.id == backup.id) {
+                    inner.backups.push(backup);
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
+            self.save_projects()?;
+            self.save_backups()?;
+        }
+        Ok(changed)
     }
 
     pub fn snapshot(&self, data_dir: &str, version: &str) -> AppSnapshot {
@@ -197,5 +246,83 @@ impl AppState {
             added_at: now_iso(),
             stats: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::BackupRecord;
+    use std::fs;
+
+    fn sample_project(id: &str) -> Project {
+        Project {
+            id: id.to_string(),
+            name: "demo-project".to_string(),
+            path: "C:\\Projects\\demo-project".to_string(),
+            added_at: now_iso(),
+            stats: None,
+        }
+    }
+
+    fn sample_backup(id: &str, project_id: &str) -> BackupRecord {
+        BackupRecord {
+            id: id.to_string(),
+            project_id: project_id.to_string(),
+            project_name: "demo-project".to_string(),
+            file_id: format!("drive-{id}"),
+            file_name: format!("demo-project_{id}.zip"),
+            size_bytes: 4096,
+            file_count: 10,
+            created_at: now_iso(),
+            web_view_link: None,
+        }
+    }
+
+    #[test]
+    fn merges_cloud_vault_without_duplicates() {
+        let dir = std::env::temp_dir().join(format!("ryz-projectup-state-{}", uuid::Uuid::new_v4()));
+        let state = AppState::new(dir.clone()).unwrap();
+
+        let remote = CloudVault {
+            schema: 1,
+            app: "ryz-projectup".to_string(),
+            updated_at: now_iso(),
+            projects: vec![sample_project("p1")],
+            backups: vec![sample_backup("b1", "p1")],
+        };
+
+        assert!(state.merge_cloud_vault(remote.clone()).unwrap());
+        assert_eq!(state.lock().projects.len(), 1);
+        assert_eq!(state.lock().backups.len(), 1);
+
+        // Merging the same cloud index twice must not duplicate records.
+        assert!(!state.merge_cloud_vault(remote).unwrap());
+        assert_eq!(state.lock().projects.len(), 1);
+        assert_eq!(state.lock().backups.len(), 1);
+
+        let vault = state.cloud_vault();
+        assert_eq!(vault.schema, 1);
+        assert_eq!(vault.app, "ryz-projectup");
+        assert_eq!(vault.projects.len(), 1);
+        assert_eq!(vault.backups.len(), 1);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejects_newer_cloud_vault_schema() {
+        let dir = std::env::temp_dir().join(format!("ryz-projectup-state-{}", uuid::Uuid::new_v4()));
+        let state = AppState::new(dir.clone()).unwrap();
+        let remote = CloudVault {
+            schema: 2,
+            app: "ryz-projectup".to_string(),
+            updated_at: now_iso(),
+            projects: vec![sample_project("p1")],
+            backups: vec![],
+        };
+        assert!(state.merge_cloud_vault(remote).is_err());
+        assert_eq!(state.lock().projects.len(), 0);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

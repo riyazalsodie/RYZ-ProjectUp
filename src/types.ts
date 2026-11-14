@@ -32,6 +32,7 @@ export interface Project {
   backup_count: number;
   total_backed_up_bytes: number;
   last_backup: BackupRecord | null;
+  path_available: boolean;
 }
 
 export interface DriveStatus {

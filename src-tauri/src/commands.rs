@@ -98,6 +98,70 @@ fn sanitize_file_name(name: &str) -> String {
     }
 }
 
+/// Open the Drive session, refresh the token if needed, and ensure the backup
+/// folder exists. Returns the client plus folder id.
+fn open_drive(state: &AppState) -> Result<(DriveClient, String), String> {
+    let (settings, tokens) = {
+        let inner = state.lock();
+        (inner.settings.clone(), inner.tokens.clone())
+    };
+    let mut tokens = tokens
+        .ok_or_else(|| "Google Drive is not connected. Connect it in Settings first.".to_string())?;
+    if tokens.refresh_token.is_empty() && tokens.access_token.is_empty() {
+        return Err("Google Drive is not connected. Connect it in Settings first.".to_string());
+    }
+
+    let access =
+        drive::ensure_access_token(&mut tokens, &settings.client_id, &settings.client_secret)?;
+    {
+        let mut inner = state.lock();
+        inner.tokens = Some(tokens.clone());
+    }
+    state.save_tokens()?;
+
+    let client = DriveClient::new(access)?;
+    let folder_id = client.ensure_folder(&settings.folder_name, settings.folder_id.as_deref())?;
+    {
+        let mut inner = state.lock();
+        inner.settings.folder_id = Some(folder_id.clone());
+    }
+    state.save_settings()?;
+    Ok((client, folder_id))
+}
+
+fn upload_cloud_metadata(state: &AppState) -> Result<(), String> {
+    let (client, folder_id) = open_drive(state)?;
+    let vault = state.cloud_vault();
+    client.upload_vault(&folder_id, &vault)
+}
+
+fn pull_and_merge_cloud(state: &AppState) -> Result<bool, String> {
+    let (client, folder_id) = open_drive(state)?;
+    let remote = client.download_vault(&folder_id)?;
+    let changed = match remote {
+        Some(vault) => state.merge_cloud_vault(vault)?,
+        None => false,
+    };
+
+    // Keep the Drive index in sync with any local-only projects or snapshots.
+    let local = state.cloud_vault();
+    if let Err(err) = client.upload_vault(&folder_id, &local) {
+        eprintln!("Drive vault index update after merge failed: {err}");
+    }
+    Ok(changed)
+}
+
+fn schedule_metadata_upload(state: AppState) {
+    if !state.drive_status().connected {
+        return;
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(err) = upload_cloud_metadata(&state) {
+            eprintln!("Drive vault index upload failed: {err}");
+        }
+    });
+}
+
 fn emit_backup(
     app: &AppHandle,
     job_id: &str,
@@ -185,6 +249,7 @@ pub async fn add_project(
             inner.projects.push(project.clone());
         }
         st.save_projects()?;
+        schedule_metadata_upload(st.clone());
 
         let backups = st.lock().backups.clone();
         Ok(st.project_view(&project, &backups))
@@ -223,12 +288,72 @@ pub async fn refresh_project(
 }
 
 #[tauri::command]
+pub async fn relink_project(
+    state: State<'_, AppState>,
+    project_id: String,
+    path: String,
+) -> Result<ProjectView, String> {
+    let st = (*state).clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let canonical = dunce::canonicalize(&path)
+            .map_err(|e| format!("Could not open that folder: {e}"))?;
+        if !canonical.is_dir() {
+            return Err("Please select a project folder, not a file.".to_string());
+        }
+        let path_string = canonical.to_string_lossy().to_string();
+        let path_key = path_string.to_lowercase();
+
+        {
+            let inner = st.lock();
+            if inner
+                .projects
+                .iter()
+                .any(|p| p.id != project_id && p.path.to_lowercase() == path_key)
+            {
+                return Err("That folder is already linked to another project.".to_string());
+            }
+            if !inner.projects.iter().any(|p| p.id == project_id) {
+                return Err("Project not found.".to_string());
+            }
+        }
+
+        let settings = st.lock().settings.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stats = scanner::scan_stats(&canonical, &settings, &cancel)?;
+
+        {
+            let mut inner = st.lock();
+            let project = inner
+                .projects
+                .iter_mut()
+                .find(|p| p.id == project_id)
+                .ok_or_else(|| "Project not found.".to_string())?;
+            project.path = path_string;
+            project.stats = Some(stats);
+        }
+        st.save_projects()?;
+        schedule_metadata_upload(st.clone());
+
+        let project = st
+            .find_project(&project_id)
+            .ok_or_else(|| "Project not found.".to_string())?;
+        let backups = st.lock().backups.clone();
+        Ok(st.project_view(&project, &backups))
+    })
+    .await
+    .map_err(|e| format!("Project relink task failed: {e}"))?
+}
+
+#[tauri::command]
 pub fn remove_project(state: State<'_, AppState>, project_id: String) -> Result<(), String> {
+    let st = (*state).clone();
     {
-        let mut inner = state.lock();
+        let mut inner = st.lock();
         inner.projects.retain(|p| p.id != project_id);
     }
-    state.save_projects()
+    st.save_projects()?;
+    schedule_metadata_upload(st);
+    Ok(())
 }
 
 #[tauri::command]
@@ -333,13 +458,11 @@ pub async fn drive_connect(state: State<'_, AppState>) -> Result<DriveStatus, St
     let cancel = st.lock().auth_cancel.clone();
     cancel.store(false, Ordering::SeqCst);
     tauri::async_runtime::spawn_blocking(move || {
-        let (client_id, client_secret, folder_name, folder_id) = {
+        let (client_id, client_secret) = {
             let inner = st.lock();
             (
                 inner.settings.client_id.clone(),
                 inner.settings.client_secret.clone(),
-                inner.settings.folder_name.clone(),
-                inner.settings.folder_id.clone(),
             )
         };
 
@@ -351,31 +474,19 @@ pub async fn drive_connect(state: State<'_, AppState>) -> Result<DriveStatus, St
 
         let cancel = st.lock().auth_cancel.clone();
 
-        let mut tokens = drive::run_oauth_flow(&client_id, &client_secret, cancel)?;
-
-        // Best-effort folder setup so Settings can deep-link into Drive right away.
-        if let Ok(access) = drive::ensure_access_token(&mut tokens, &client_id, &client_secret) {
-            if let Ok(client) = DriveClient::new(access) {
-                match client.ensure_folder(&folder_name, folder_id.as_deref()) {
-                    Ok(id) => {
-                        {
-                            let mut inner = st.lock();
-                            inner.settings.folder_id = Some(id);
-                        }
-                        let _ = st.save_settings();
-                    }
-                    Err(err) => {
-                        eprintln!("Drive folder setup deferred until first backup: {err}");
-                    }
-                }
-            }
-        }
+        let tokens = drive::run_oauth_flow(&client_id, &client_secret, cancel)?;
 
         {
             let mut inner = st.lock();
             inner.tokens = Some(tokens.clone());
         }
         st.save_tokens()?;
+
+        // Pull the Drive vault index (if this account already has one) so a new
+        // PC gets its projects and snapshot history back automatically.
+        if let Err(err) = pull_and_merge_cloud(&st) {
+            eprintln!("Drive vault sync deferred: {err}");
+        }
 
         Ok(st.drive_status())
     })
@@ -388,6 +499,21 @@ pub fn cancel_drive_auth(state: State<'_, AppState>) -> Result<(), String> {
     let cancel = state.lock().auth_cancel.clone();
     cancel.store(true, Ordering::SeqCst);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn sync_cloud_metadata(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppSnapshot, String> {
+    let st = (*state).clone();
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        pull_and_merge_cloud(&st)?;
+        Ok(st.snapshot(&app_data_string(&handle), env!("CARGO_PKG_VERSION")))
+    })
+    .await
+    .map_err(|e| format!("Cloud vault sync task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -724,6 +850,13 @@ fn backup_blocking(
         state.push_backup(record.clone())?;
         cleanup_old_backups(state, &client, &project.id, settings.retention, app, job_id);
 
+        // Keep the cloud vault index up to date so another PC can restore the
+        // project list and snapshot history.
+        let vault = state.cloud_vault();
+        if let Err(err) = client.upload_vault(&folder_id, &vault) {
+            eprintln!("Snapshot uploaded but Drive vault index update failed: {err}");
+        }
+
         let _ = fs::remove_file(&archive_path);
 
         emit_backup(
@@ -997,6 +1130,7 @@ pub async fn delete_backup(
             inner.backups.retain(|b| b.id != backup_id);
         }
         st.save_backups()?;
+        schedule_metadata_upload(st.clone());
         Ok(())
     })
     .await

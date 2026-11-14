@@ -50,6 +50,7 @@ pub struct ProjectView {
     pub backup_count: u32,
     pub total_backed_up_bytes: u64,
     pub last_backup: Option<BackupRecord>,
+    pub path_available: bool,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -235,4 +236,24 @@ pub struct UploadedFile {
     pub name: String,
     pub size: Option<u64>,
     pub web_view_link: Option<String>,
+}
+
+/// The small JSON index stored in the user's Drive folder. It lets a new PC
+/// reconnect to the same vault and recover projects + snapshot history.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CloudVault {
+    #[serde(default = "default_cloud_schema")]
+    pub schema: u32,
+    #[serde(default)]
+    pub app: String,
+    #[serde(default)]
+    pub updated_at: String,
+    #[serde(default)]
+    pub projects: Vec<Project>,
+    #[serde(default)]
+    pub backups: Vec<BackupRecord>,
+}
+
+fn default_cloud_schema() -> u32 {
+    1
 }

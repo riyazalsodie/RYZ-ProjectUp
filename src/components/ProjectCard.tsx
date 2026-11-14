@@ -7,6 +7,8 @@ import {
   Eye,
   FileWarning,
   FolderOpen,
+  FolderSearch,
+  FolderX,
   Loader2,
   MoreHorizontal,
   RefreshCw,
@@ -34,6 +36,7 @@ interface ProjectCardProps {
   onBackup: (project: Project) => void;
   onPreview: (project: Project) => void;
   onReveal: (path: string) => void;
+  onRelink: (project: Project) => void;
   onRemove: (project: Project) => void;
   onRefreshStats: (project: Project) => Promise<void>;
 }
@@ -45,6 +48,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   onBackup,
   onPreview,
   onReveal,
+  onRelink,
   onRemove,
   onRefreshStats,
 }) => {
@@ -84,7 +88,12 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="truncate text-sm font-semibold text-white">{project.name}</h3>
-              {stats?.gitignore_present ? (
+              {!project.path_available ? (
+                <Badge variant="warning" className="gap-1">
+                  <FolderX className="h-2.5 w-2.5" />
+                  Folder missing
+                </Badge>
+              ) : stats?.gitignore_present ? (
                 <Badge variant="secondary" className="gap-1 border-primary/15 bg-primary/[0.06] text-primary/80">
                   <Check className="h-2.5 w-2.5" />
                   .gitignore
@@ -95,7 +104,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   no .gitignore
                 </Badge>
               )}
-              {stats?.ryzignore_present ? (
+              {project.path_available && stats?.ryzignore_present ? (
                 <Badge variant="secondary" className="gap-1">
                   <GitBranch className="h-2.5 w-2.5" />
                   .ryzignore
@@ -105,11 +114,19 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
 
             <button
               type="button"
-              onClick={() => onReveal(project.path)}
-              title={project.path}
+              onClick={() => (project.path_available ? onReveal(project.path) : onRelink(project))}
+              title={
+                project.path_available
+                  ? project.path
+                  : `${project.path} — not found on this PC. Click to relink.`
+              }
               className="path-text mt-1.5 flex max-w-full items-center gap-1.5 text-left text-neutral-500 transition-colors hover:text-neutral-300"
             >
-              <FolderOpen className="h-3 w-3 shrink-0" />
+              {project.path_available ? (
+                <FolderOpen className="h-3 w-3 shrink-0" />
+              ) : (
+                <FolderX className="h-3 w-3 shrink-0 text-amber-400/80" />
+              )}
               <span className="truncate">{truncateMiddle(project.path, 72)}</span>
             </button>
 
@@ -137,31 +154,45 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         </div>
 
         <div className="flex shrink-0 items-center gap-2 lg:justify-end">
-          <Button
-            size="sm"
-            onClick={() => onBackup(project)}
-            className="h-8 gap-1.5 px-3.5"
-            title={driveConnected ? "Backup this project to Google Drive" : "Connect Google Drive first"}
-          >
-            <ArrowUpFromLine className="h-3.5 w-3.5" />
-            Back up
-          </Button>
-
-          {refreshing ? (
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.03]">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-            </div>
+          {project.path_available ? (
+            <Button
+              size="sm"
+              onClick={() => onBackup(project)}
+              className="h-8 gap-1.5 px-3.5"
+              title={driveConnected ? "Backup this project to Google Drive" : "Connect Google Drive first"}
+            >
+              <ArrowUpFromLine className="h-3.5 w-3.5" />
+              Back up
+            </Button>
           ) : (
             <Button
-              size="icon-sm"
-              variant="secondary"
-              onClick={handleRefresh}
-              title="Re-scan ignore rules and size"
-              className="border-white/[0.07]"
+              size="sm"
+              onClick={() => onRelink(project)}
+              className="h-8 gap-1.5 px-3.5"
+              title="Choose this project's folder on this PC"
             >
-              <RefreshCw className="h-3.5 w-3.5" />
+              <FolderSearch className="h-3.5 w-3.5" />
+              Relink folder
             </Button>
           )}
+
+          {project.path_available ? (
+            refreshing ? (
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.03]">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+              </div>
+            ) : (
+              <Button
+                size="icon-sm"
+                variant="secondary"
+                onClick={handleRefresh}
+                title="Re-scan ignore rules and size"
+                className="border-white/[0.07]"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </Button>
+            )
+          ) : null}
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -171,15 +202,25 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Project</DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => onPreview(project)}>
+              <DropdownMenuItem onClick={() => onRelink(project)}>
+                <FolderSearch className="h-3.5 w-3.5 text-primary/70" />
+                Relink folder…
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => onPreview(project)}
+                disabled={!project.path_available}
+              >
                 <Eye className="h-3.5 w-3.5 text-primary/70" />
                 Inspect ignore rules
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onReveal(project.path)}>
+              <DropdownMenuItem
+                onClick={() => onReveal(project.path)}
+                disabled={!project.path_available}
+              >
                 <FolderOpen className="h-3.5 w-3.5 text-neutral-500" />
                 Reveal in Explorer
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleRefresh}>
+              <DropdownMenuItem onClick={handleRefresh} disabled={!project.path_available}>
                 <RefreshCw className="h-3.5 w-3.5 text-neutral-500" />
                 Re-scan project
               </DropdownMenuItem>

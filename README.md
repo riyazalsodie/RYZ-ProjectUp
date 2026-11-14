@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/riyazalsodie/RYZ-ProjectUp/releases"><img alt="Status: Beta" src="https://img.shields.io/badge/status-beta-00ff88?style=flat-square" /></a>
   <a href="https://github.com/riyazalsodie/RYZ-ProjectUp/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/riyazalsodie/RYZ-ProjectUp/actions/workflows/ci.yml/badge.svg" /></a>
-  <img alt="Version 0.1.0-beta.1" src="https://img.shields.io/badge/version-0.1.0--beta.1-00ff88?style=flat-square" />
+  <img alt="Version 0.2.0-beta.1" src="https://img.shields.io/badge/version-0.2.0--beta.1-00ff88?style=flat-square" />
   <img alt="Platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0b0f0d?style=flat-square" />
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white" />
   <img alt="Rust" src="https://img.shields.io/badge/Rust-1.88%2B-000000?style=flat-square&logo=rust" />
@@ -57,6 +57,8 @@ Select a folder  →  Read ignore rules  →  Build zip locally  →  Upload to 
 | **Snapshot retention** | Keep the last N backups per project — older Drive files are cleaned up automatically. |
 | **Restore anywhere** | Download any snapshot and extract it into a fresh folder. Zip-slip protected. |
 | **Backup history** | Search, open in Drive, restore or delete every snapshot from one place. |
+| **Drive vault index** | Projects, original folders and snapshot history are saved to a private `ryz-projectup-vault.json` in your Drive folder. Connect from a new PC and the whole vault comes back. |
+| **Relink on a new PC** | Restored projects whose folders moved show a **Folder missing** warning and a one-click **Relink folder** action — history is kept. |
 | **Extra ignore rules** | Add global patterns on top of each project's rules, or drop a `.ryzignore` file inside a project. |
 | **In-app setup guide** | A complete Google Cloud walkthrough with direct links, test-user steps and OAuth troubleshooting. |
 | **OLED UI** | Pitch-black surfaces, `#00FF88` accents, rounded cards and dialogs, custom frameless title bar and subtle motion. |
@@ -83,8 +85,8 @@ Grab the latest **beta** from the [Releases page](https://github.com/riyazalsodi
 
 | Build | File | Notes |
 | --- | --- | --- |
-| Windows installer | `RYZ.ProjectUp.0.1.0-beta.1.Setup.exe` | NSIS, per-user install, no admin required |
-| Windows portable | `RYZ.ProjectUp.0.1.0-beta.1.exe` | Run from any folder |
+| Windows installer | `RYZ.ProjectUp.0.2.0-beta.1.Setup.exe` | NSIS, per-user install, no admin required |
+| Windows portable | `RYZ.ProjectUp.0.2.0-beta.1.exe` | Run from any folder |
 
 **Requirements:** Windows 10/11 with the WebView2 runtime (preinstalled on modern Windows). macOS and Linux build from source; beta testing is currently Windows-first.
 
@@ -157,6 +159,33 @@ Hidden files such as `.env` are included unless a rule excludes them. Add `.env`
 
 ---
 
+## New PC & multi-PC sync
+
+ProjectUp keeps a small **vault index** in your Drive backup folder:
+
+```text
+<Drive backup folder>/ryz-projectup-vault.json
+```
+
+It contains your project list, original folder paths, stats and all snapshot records — **never OAuth credentials or tokens**. The index is updated after adding/removing projects, creating backups, deleting snapshots, and when you press **Sync**.
+
+### Restoring on a new PC
+
+1. Install ProjectUp and enter the **same Desktop OAuth client** (Client ID + secret) you used before.
+2. Connect the **same Google account** and use the **same backup folder name**.
+3. Click **Connect Google Drive**. ProjectUp downloads the vault index and restores your projects and backup history automatically.
+4. Folders from the old PC will show **Folder missing**. Click **Relink folder** on the project card and select the project's folder on this PC — every snapshot stays linked to it.
+5. On later launches, ProjectUp syncs the index automatically. You can also press **Settings → Sync** at any time.
+
+### Important notes
+
+- Use the **same OAuth client**. Google's `drive.file` scope only lets an app see files created by that same OAuth client.
+- Use the **same Drive account and backup folder name**; the app finds the index inside that folder.
+- Sync is **additive** in this beta: projects and snapshots from another PC are merged into this one. Deleting a project or snapshot on one PC does not automatically remove it from another PC's local vault.
+- The index contains local project paths as hints. They are not secret, but they are stored in your private Drive folder.
+
+---
+
 ## Where your data lives
 
 | Data | Location |
@@ -165,6 +194,7 @@ Hidden files such as `.env` are included unless a rule excludes them. Add `.env`
 | OAuth tokens | `auth.json` in the same local data folder |
 | WebView2 cache | `%LOCALAPPDATA%\com.ryz.projectup` |
 | Snapshots | Your Google Drive → `RYZ ProjectUp` folder |
+| Cloud vault index | `ryz-projectup-vault.json` in the Drive backup folder — projects, paths and snapshot history (no secrets) |
 | Temporary zip | OS temp folder — deleted after upload or restore |
 
 The app data folder contains your Drive **refresh token**. Treat it as sensitive; the token is stored as plain local JSON, not encrypted. Use full-disk encryption and a locked user account on shared machines.
@@ -261,6 +291,7 @@ Backup and restore progress is streamed to the UI through `backup-progress` and 
 - **Narrow Drive scope.** ProjectUp requests only `drive.file`; it cannot browse unrelated files.
 - **Credentials stay local.** The OAuth Client ID, Client secret and refresh token live in the local app data folder.
 - **Snapshots are compressed, not encrypted.** If your project contains secrets, use Drive/OS-level encryption or exclude those files. Backup zips are only as private as the Google account that holds them.
+- **The vault index is not encrypted.** It contains project names, local paths and snapshot metadata, but no OAuth credentials or tokens.
 - **Path traversal protection.** Restore uses zip entry name validation and refuses paths outside the restore directory.
 - **Beta installer is unsigned.** Verify the SHA-256 on the release page before running.
 
@@ -277,6 +308,8 @@ This is the first public beta. What works today:
 - One-click uploads to Google Drive
 - Retention cleanup
 - Backup history, restore and delete
+- Drive vault index: restore projects + history on a new PC
+- Relink missing project folders after moving PCs
 - In-app Google OAuth setup guide
 - OLED desktop UI and native window controls
 
@@ -285,6 +318,8 @@ Known limitations / not yet included:
 - No scheduled or background automatic backups
 - No incremental/delta snapshots — each backup is a full zip
 - No client-side encryption of snapshots
+- Cloud sync is additive; deletions on one PC do not propagate to other PCs' local vaults
+- New-PC restore requires the same OAuth client, Drive account and folder name
 - One Drive destination folder per configuration
 - No auto-update channel yet
 - Requires your own Google OAuth client

@@ -244,6 +244,13 @@ export const OAuthSetupGuide: React.FC<OAuthSetupGuideProps> = ({ open, onOpenCh
                     , so it can manage only the backup files it creates.
                   </span>
                 </li>
+                <li className="flex gap-2">
+                  <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-primary/60" />
+                  <span>
+                    On a new PC, use the same OAuth client, Google account and backup folder name. ProjectUp
+                    restores the project list and snapshot history from the Drive vault index.
+                  </span>
+                </li>
               </ul>
             </Step>
           </div>

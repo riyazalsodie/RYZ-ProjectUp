@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -52,6 +52,7 @@ const App: React.FC = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>("projects");
   const [search, setSearch] = useState("");
+  const startupCloudSync = useRef(false);
 
   const [adding, setAdding] = useState(false);
   const [previewProject, setPreviewProject] = useState<Project | null>(null);
@@ -75,17 +76,49 @@ const App: React.FC = () => {
 
   const safeRefresh = useCallback(async () => {
     try {
-      await refresh();
+      return await refresh();
     } catch (err) {
       console.error("Could not refresh app state", err);
+      return undefined;
     }
   }, [refresh]);
+
+  const syncCloudVault = useCallback(async () => {
+    const next = await invoke<AppSnapshot>("sync_cloud_metadata");
+    setSnapshot(next);
+    return next;
+  }, []);
+
+  // On app launch with a saved Drive session, pull any projects/history that
+  // were added from another PC. Runs once per launch.
+  useEffect(() => {
+    if (loading || !snapshot?.drive.connected || startupCloudSync.current) return;
+    startupCloudSync.current = true;
+    const beforeProjects = snapshot.projects.length;
+    const beforeBackups = snapshot.backups.length;
+    const timer = window.setTimeout(() => {
+      syncCloudVault()
+        .then((next) => {
+          if (next.projects.length > beforeProjects || next.backups.length > beforeBackups) {
+            toast.success("Vault restored from Google Drive", {
+              description: `${next.projects.length} projects · ${next.backups.length} snapshots`,
+            });
+          }
+        })
+        .catch((err) => console.error("Cloud vault sync failed", err));
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [loading, snapshot?.drive.connected, syncCloudVault]);
 
   useEffect(() => {
     refresh()
       .catch((err) => setLoadError(errorMessage(err)))
       .finally(() => setLoading(false));
   }, [refresh]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("window-maximized", isMaximized);
+  }, [isMaximized]);
 
   useEffect(() => {
     let disposed = false;
@@ -149,6 +182,32 @@ const App: React.FC = () => {
     } catch (err) {
       toast.error("Scan failed", { description: errorMessage(err) });
     }
+  };
+
+  const handleRelinkProject = async (project: Project) => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: `Select the folder for ${project.name}`,
+      });
+      if (!selected || Array.isArray(selected)) return;
+
+      await invoke("relink_project", { projectId: project.id, path: selected });
+      await safeRefresh();
+      toast.success("Project relinked", {
+        description: "Snapshots and history were kept — you can back up again.",
+      });
+    } catch (err) {
+      toast.error("Could not relink project", { description: errorMessage(err) });
+    }
+  };
+
+  const handleSyncCloud = async () => {
+    const next = await syncCloudVault();
+    toast.success("Vault synced from Google Drive", {
+      description: `${next.projects.length} projects · ${next.backups.length} snapshots`,
+    });
   };
 
   const handleReveal = async (path: string) => {
@@ -323,6 +382,8 @@ const App: React.FC = () => {
 
   const handleDriveStart = async (clientId: string, clientSecret: string) => {
     if (!snapshot) return;
+    const beforeProjects = snapshot.projects.length;
+    const beforeBackups = snapshot.backups.length;
     setDriveConnecting(true);
     setDriveError(null);
     try {
@@ -344,11 +405,18 @@ const App: React.FC = () => {
       }
 
       const status = await invoke<DriveStatus>("drive_connect");
-      await safeRefresh();
+      const next = await safeRefresh();
       setDriveConnecting(false);
       setDriveError(null);
       setDriveDialogOpen(false);
-      toast.success("Google Drive connected", { description: status.email || status.folder_name });
+
+      const restored =
+        next && (next.projects.length > beforeProjects || next.backups.length > beforeBackups)
+          ? ` · ${next.projects.length} projects restored`
+          : "";
+      toast.success("Google Drive connected", {
+        description: `${status.email || status.folder_name}${restored}`,
+      });
     } catch (err) {
       setDriveConnecting(false);
       setDriveError(errorMessage(err));
@@ -496,6 +564,7 @@ const App: React.FC = () => {
                 onBackup={handleStartBackup}
                 onPreview={(project) => setPreviewProject(project)}
                 onReveal={handleReveal}
+                onRelink={handleRelinkProject}
                 onRemove={setRemoveProjectTarget}
                 onRefreshStats={handleRefreshStats}
                 onConnectDrive={() => {
@@ -525,6 +594,7 @@ const App: React.FC = () => {
                   setDriveDialogOpen(true);
                 }}
                 onDisconnectDrive={handleDisconnectDrive}
+                onSyncCloud={handleSyncCloud}
                 onOpenUrl={handleOpenUrl}
                 onReveal={handleReveal}
               />

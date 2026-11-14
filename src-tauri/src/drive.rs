@@ -12,7 +12,7 @@ use rand::RngCore;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::models::{DriveTokens, UploadedFile};
+use crate::models::{CloudVault, DriveTokens, UploadedFile};
 
 const AUTH_ENDPOINT: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
@@ -20,6 +20,7 @@ const USERINFO_ENDPOINT: &str = "https://www.googleapis.com/oauth2/v3/userinfo";
 const DRIVE_FILES_ENDPOINT: &str = "https://www.googleapis.com/drive/v3/files";
 const DRIVE_UPLOAD_ENDPOINT: &str = "https://www.googleapis.com/upload/drive/v3/files";
 const SCOPE: &str = "openid email profile https://www.googleapis.com/auth/drive.file";
+const VAULT_FILE_NAME: &str = "ryz-projectup-vault.json";
 
 fn http_client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
@@ -737,6 +738,158 @@ impl DriveClient {
         }
         let body = response.text().unwrap_or_default();
         Err(google_error(&body, status.as_u16()))
+    }
+
+    fn find_vault_file_id(&self, folder_id: &str) -> Result<Option<String>, String> {
+        let escaped_name = VAULT_FILE_NAME.replace('\\', "\\\\").replace('\'', "\\'");
+        let query = format!(
+            "name = '{}' and '{}' in parents and trashed = false",
+            escaped_name, folder_id
+        );
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let url = format!(
+            "{DRIVE_FILES_ENDPOINT}?q={encoded}&fields=files(id,name,modifiedTime)&spaces=drive&pageSize=10&supportsAllDrives=true&includeItemsFromAllDrives=true"
+        );
+        let response = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.token)
+            .send()
+            .map_err(|e| format!("Could not look up the Drive vault index: {e}"))?;
+        let status = response.status();
+        let body = response
+            .text()
+            .map_err(|e| format!("Could not read the Drive vault index response: {e}"))?;
+        if !status.is_success() {
+            return Err(google_error(&body, status.as_u16()));
+        }
+        let payload: Value = serde_json::from_str(&body)
+            .map_err(|e| format!("Unexpected Drive vault index response: {e}"))?;
+        let files = match payload.get("files").and_then(|value| value.as_array()) {
+            Some(files) => files,
+            None => return Ok(None),
+        };
+
+        let mut best: Option<(String, String)> = None;
+        for file in files {
+            let id = match file.get("id").and_then(|value| value.as_str()) {
+                Some(id) if !id.is_empty() => id.to_string(),
+                _ => continue,
+            };
+            let modified = file
+                .get("modifiedTime")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let replace = best
+                .as_ref()
+                .map(|(_, current)| modified > *current)
+                .unwrap_or(true);
+            if replace {
+                best = Some((id, modified));
+            }
+        }
+        Ok(best.map(|(id, _)| id))
+    }
+
+    /// Download the synced project/snapshot index from the backup folder.
+    pub fn download_vault(&self, folder_id: &str) -> Result<Option<CloudVault>, String> {
+        let file_id = match self.find_vault_file_id(folder_id)? {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+        let url = format!(
+            "{DRIVE_FILES_ENDPOINT}/{file_id}?alt=media&supportsAllDrives=true"
+        );
+        let response = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.token)
+            .send()
+            .map_err(|e| format!("Could not download the Drive vault index: {e}"))?;
+        let status = response.status();
+        let body = response
+            .text()
+            .map_err(|e| format!("Could not read the Drive vault index: {e}"))?;
+        if !status.is_success() {
+            return Err(google_error(&body, status.as_u16()));
+        }
+        if body.trim().is_empty() {
+            return Ok(None);
+        }
+        let vault: CloudVault = serde_json::from_str(&body)
+            .map_err(|e| format!("The Drive vault index is not valid JSON: {e}"))?;
+        if !vault.app.is_empty() && vault.app != "ryz-projectup" {
+            return Err("That Drive vault was created by a different application.".to_string());
+        }
+        if vault.schema > 1 {
+            return Err(
+                "That Drive vault was created by a newer version of ProjectUp. Update this app first."
+                    .to_string(),
+            );
+        }
+        Ok(Some(vault))
+    }
+
+    /// Create or replace the synced vault index in the backup folder.
+    pub fn upload_vault(&self, folder_id: &str, vault: &CloudVault) -> Result<(), String> {
+        let json = serde_json::to_vec_pretty(vault)
+            .map_err(|e| format!("Could not serialize the Drive vault index: {e}"))?;
+
+        let file_id = match self.find_vault_file_id(folder_id)? {
+            Some(id) => id,
+            None => {
+                let metadata = json!({
+                    "name": VAULT_FILE_NAME,
+                    "parents": [folder_id],
+                    "mimeType": "application/json",
+                    "appProperties": {
+                        "ryzApp": "projectup",
+                        "ryzType": "vault"
+                    }
+                });
+                let url = format!("{DRIVE_FILES_ENDPOINT}?fields=id&supportsAllDrives=true");
+                let response = self
+                    .http
+                    .post(&url)
+                    .bearer_auth(&self.token)
+                    .json(&metadata)
+                    .send()
+                    .map_err(|e| format!("Could not create the Drive vault index: {e}"))?;
+                let status = response.status();
+                let body = response
+                    .text()
+                    .map_err(|e| format!("Could not read the Drive vault response: {e}"))?;
+                if !status.is_success() {
+                    return Err(google_error(&body, status.as_u16()));
+                }
+                let payload: Value = serde_json::from_str(&body)
+                    .map_err(|e| format!("Unexpected Drive vault response: {e}"))?;
+                payload
+                    .get("id")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.to_string())
+                    .ok_or_else(|| "Google Drive did not return a vault index id.".to_string())?
+            }
+        };
+
+        let url = format!(
+            "https://www.googleapis.com/upload/drive/v3/files/{file_id}?uploadType=media&fields=id,modifiedTime&supportsAllDrives=true"
+        );
+        let response = self
+            .http
+            .patch(&url)
+            .bearer_auth(&self.token)
+            .header("Content-Type", "application/json")
+            .body(json)
+            .send()
+            .map_err(|e| format!("Could not update the Drive vault index: {e}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(google_error(&body, status.as_u16()));
+        }
+        Ok(())
     }
 }
 

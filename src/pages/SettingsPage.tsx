@@ -12,6 +12,7 @@ import {
   KeyRound,
   Link2Off,
   Lock,
+  RefreshCw,
   Save,
   ShieldCheck,
   Sparkles,
@@ -37,6 +38,7 @@ interface SettingsPageProps {
   onSave: (input: SettingsInput) => Promise<void>;
   onConnectDrive: () => void;
   onDisconnectDrive: () => Promise<void>;
+  onSyncCloud: () => Promise<void>;
   onOpenUrl: (url: string) => void;
   onReveal: (path: string) => void;
 }
@@ -46,6 +48,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onSave,
   onConnectDrive,
   onDisconnectDrive,
+  onSyncCloud,
   onOpenUrl,
   onReveal,
 }) => {
@@ -66,6 +69,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [disconnecting, setDisconnecting] = useState(false);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [syncingCloud, setSyncingCloud] = useState(false);
 
   useEffect(() => {
     setFolderName(settings.folder_name);
@@ -144,6 +148,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       toast.error("Could not disconnect", { description: String(err) });
     } finally {
       setDisconnecting(false);
+    }
+  };
+
+  const handleSyncCloud = async () => {
+    setSyncingCloud(true);
+    try {
+      await onSyncCloud();
+    } catch (err) {
+      toast.error("Cloud vault sync failed", { description: String(err) });
+    } finally {
+      setSyncingCloud(false);
     }
   };
 
@@ -226,6 +241,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <div className="flex shrink-0 flex-wrap gap-2">
                 {drive.connected ? (
                   <>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={handleSyncCloud}
+                      loading={syncingCloud}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Sync
+                    </Button>
                     {drive.folder_id ? (
                       <Button
                         variant="secondary"
@@ -533,6 +558,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               >
                 <Copy className="h-3.5 w-3.5" />
               </Button>
+            </div>
+
+            <div className="mt-3 flex items-start gap-2 rounded-xl border border-primary/15 bg-primary/[0.04] p-3">
+              <Cloud className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/70" />
+              <p className="text-[10px] leading-relaxed text-neutral-500">
+                Your project list, folders and snapshot history are also saved as{" "}
+                <code className="font-mono text-neutral-300">ryz-projectup-vault.json</code> in the Drive
+                backup folder. Connect the same Drive on another PC and ProjectUp restores the vault
+                automatically — OAuth secrets and tokens are never included.
+              </p>
             </div>
 
             <div className="mt-3 grid gap-2 sm:grid-cols-2">

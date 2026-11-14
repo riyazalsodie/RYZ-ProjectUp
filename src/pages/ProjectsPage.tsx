@@ -31,6 +31,7 @@ interface ProjectsPageProps {
   onBackup: (project: Project) => void;
   onPreview: (project: Project) => void;
   onReveal: (path: string) => void;
+  onRelink: (project: Project) => void;
   onRemove: (project: Project) => void;
   onRefreshStats: (project: Project) => Promise<void>;
   onConnectDrive: () => void;
@@ -47,6 +48,7 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
   onBackup,
   onPreview,
   onReveal,
+  onRelink,
   onRemove,
   onRefreshStats,
   onConnectDrive,
@@ -256,6 +258,7 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
                 onBackup={onBackup}
                 onPreview={onPreview}
                 onReveal={onReveal}
+                onRelink={onRelink}
                 onRemove={onRemove}
                 onRefreshStats={onRefreshStats}
               />

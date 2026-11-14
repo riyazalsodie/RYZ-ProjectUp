@@ -180,6 +180,16 @@ body,
   -webkit-app-region: no-drag;
 }
 
+/* Dialog portals live outside the rounded app shell, so clip their blurred
+   backdrop to the same rounded window shape (square while maximized). */
+.dialog-overlay {
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+html.window-maximized .dialog-overlay {
+  border-radius: 0;
+}
+
 /* Code / path typography */
 .path-text {
   font-family: "Geist Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
