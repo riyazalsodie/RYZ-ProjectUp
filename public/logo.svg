@@ -1,0 +1,41 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="80" y1="32" x2="440" y2="492" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#04130A"/>
+      <stop offset="0.55" stop-color="#010704"/>
+      <stop offset="1" stop-color="#000000"/>
+    </linearGradient>
+    <linearGradient id="green" x1="128" y1="150" x2="392" y2="386" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8DFFC4"/>
+      <stop offset="0.42" stop-color="#00FF88"/>
+      <stop offset="1" stop-color="#00B963"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(256 250) rotate(90) scale(210)">
+      <stop stop-color="#00FF88" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#00FF88" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="blur" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+  </defs>
+
+  <rect x="12" y="12" width="488" height="488" rx="116" fill="url(#bg)"/>
+  <rect x="12.75" y="12.75" width="486.5" height="486.5" rx="115.25" stroke="#00FF88" stroke-opacity="0.2" stroke-width="1.5"/>
+  <circle cx="256" cy="248" r="188" fill="url(#glow)"/>
+
+  <!-- folder body -->
+  <path d="M112 196C112 179.431 125.431 166 142 166H219.5L252 201H370C386.569 201 400 214.431 400 231V360C400 376.569 386.569 390 370 390H142C125.431 390 112 376.569 112 360V196Z" fill="#03150B" stroke="url(#green)" stroke-width="11" stroke-linejoin="round"/>
+  <path d="M112 241H400V360C400 376.569 386.569 390 370 390H142C125.431 390 112 376.569 112 360V241Z" fill="#041C0F" stroke="url(#green)" stroke-width="11" stroke-linejoin="round"/>
+
+  <!-- upload arrow -->
+  <path d="M256 349V266" stroke="url(#green)" stroke-width="19" stroke-linecap="round"/>
+  <path d="M214 305L256 263L298 305" stroke="url(#green)" stroke-width="19" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- sparkles -->
+  <circle cx="352" cy="157" r="8" fill="#00FF88"/>
+  <circle cx="352" cy="157" r="18" fill="#00FF88" fill-opacity="0.22" filter="url(#blur)"/>
+  <path d="M392 201L392 173M378 187H406" stroke="#00FF88" stroke-width="6" stroke-linecap="round" stroke-opacity="0.85"/>
+
+  <!-- bottom highlight -->
+  <path d="M176 413H336" stroke="#00FF88" stroke-opacity="0.35" stroke-width="5" stroke-linecap="round"/>
+</svg>

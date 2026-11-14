@@ -1,0 +1,1073 @@
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+
+use tauri::{AppHandle, Emitter, Manager, State};
+use uuid::Uuid;
+
+use crate::archive;
+use crate::drive::{self, DriveClient};
+use crate::models::{
+    now_iso, AppSnapshot, BackupProgressEvent, BackupRecord, DriveStatus, ProjectView,
+    RestoreProgressEvent, RestoreResult, ScanPreview, SettingsInput,
+};
+use crate::scanner;
+use crate::state::AppState;
+
+fn app_data_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("Could not resolve the app data directory: {e}"))
+}
+
+struct TempFileGuard(PathBuf);
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+fn app_data_string(app: &AppHandle) -> String {
+    app_data_path(app)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default()
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0usize;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+fn sanitize_folder_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c == '/' || c == '\\' || c.is_control() {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_end_matches('.').trim();
+    if trimmed.is_empty() {
+        "RYZ ProjectUp".to_string()
+    } else {
+        trimmed.chars().take(120).collect()
+    }
+}
+
+fn sanitize_file_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_end_matches('.').trim();
+    let candidate = if trimmed.is_empty() {
+        "project".to_string()
+    } else {
+        trimmed.chars().take(90).collect::<String>()
+    };
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+        "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if RESERVED.contains(&candidate.to_uppercase().as_str()) {
+        format!("_{candidate}")
+    } else {
+        candidate
+    }
+}
+
+fn emit_backup(
+    app: &AppHandle,
+    job_id: &str,
+    phase: &str,
+    percent: f64,
+    message: String,
+    current: u64,
+    total: u64,
+    bytes_done: u64,
+    bytes_total: u64,
+) {
+    let _ = app.emit(
+        "backup-progress",
+        BackupProgressEvent {
+            job_id: job_id.to_string(),
+            phase: phase.to_string(),
+            percent: percent.clamp(0.0, 100.0),
+            message,
+            current,
+            total,
+            bytes_done,
+            bytes_total,
+        },
+    );
+}
+
+fn emit_restore(app: &AppHandle, job_id: &str, phase: &str, percent: f64, message: String) {
+    let _ = app.emit(
+        "restore-progress",
+        RestoreProgressEvent {
+            job_id: job_id.to_string(),
+            phase: phase.to_string(),
+            percent: percent.clamp(0.0, 100.0),
+            message,
+        },
+    );
+}
+
+#[tauri::command]
+pub fn get_app_state(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshot, String> {
+    Ok(state.snapshot(&app_data_string(&app), env!("CARGO_PKG_VERSION")))
+}
+
+#[tauri::command]
+pub async fn add_project(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<ProjectView, String> {
+    let st = (*state).clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let canonical = dunce::canonicalize(&path)
+            .map_err(|e| format!("Could not open that folder: {e}"))?;
+        if !canonical.is_dir() {
+            return Err("Please select a project folder, not a file.".to_string());
+        }
+        let path_string = canonical.to_string_lossy().to_string();
+        let path_key = path_string.to_lowercase();
+
+        {
+            let inner = st.lock();
+            if inner
+                .projects
+                .iter()
+                .any(|p| p.path.to_lowercase() == path_key)
+            {
+                return Err("That project is already in your vault.".to_string());
+            }
+        }
+
+        let name = canonical
+            .file_name()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("Project")
+            .to_string();
+
+        let settings = st.lock().settings.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stats = scanner::scan_stats(&canonical, &settings, &cancel)?;
+
+        let mut project = AppState::new_project(name, path_string);
+        project.stats = Some(stats);
+        {
+            let mut inner = st.lock();
+            inner.projects.push(project.clone());
+        }
+        st.save_projects()?;
+
+        let backups = st.lock().backups.clone();
+        Ok(st.project_view(&project, &backups))
+    })
+    .await
+    .map_err(|e| format!("Project scan task failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn refresh_project(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<ProjectView, String> {
+    let st = (*state).clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = st
+            .find_project(&project_id)
+            .ok_or_else(|| "Project not found.".to_string())?;
+        let root = PathBuf::from(&project.path);
+        if !root.is_dir() {
+            return Err(format!("Project folder no longer exists: {}", project.path));
+        }
+        let settings = st.lock().settings.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stats = scanner::scan_stats(&root, &settings, &cancel)?;
+        st.update_project_stats(&project_id, stats)?;
+
+        let project = st
+            .find_project(&project_id)
+            .ok_or_else(|| "Project not found.".to_string())?;
+        let backups = st.lock().backups.clone();
+        Ok(st.project_view(&project, &backups))
+    })
+    .await
+    .map_err(|e| format!("Project scan task failed: {e}"))?
+}
+
+#[tauri::command]
+pub fn remove_project(state: State<'_, AppState>, project_id: String) -> Result<(), String> {
+    {
+        let mut inner = state.lock();
+        inner.projects.retain(|p| p.id != project_id);
+    }
+    state.save_projects()
+}
+
+#[tauri::command]
+pub async fn scan_project_preview(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<ScanPreview, String> {
+    let st = (*state).clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = st
+            .find_project(&project_id)
+            .ok_or_else(|| "Project not found.".to_string())?;
+        let root = PathBuf::from(&project.path);
+        if !root.is_dir() {
+            return Err(format!("Project folder no longer exists: {}", project.path));
+        }
+        let settings = st.lock().settings.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut noop = |_: u64| {};
+        let outcome = scanner::scan_project(&root, &settings, 400, &cancel, &mut noop)?;
+
+        st.update_project_stats(&project_id, outcome.stats.clone())?;
+
+        Ok(ScanPreview {
+            stats: outcome.stats,
+            ignored_samples: outcome.ignored_samples,
+            included_samples: outcome.included_samples,
+            warnings: outcome.warnings,
+        })
+    })
+    .await
+    .map_err(|e| format!("Project scan task failed: {e}"))?
+}
+
+#[tauri::command]
+pub fn save_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    input: SettingsInput,
+) -> Result<AppSnapshot, String> {
+    let st = (*state).clone();
+    {
+        let mut inner = st.lock();
+        let mut credentials_changed = false;
+        let mut client_id_changed = false;
+        let mut secret_provided = false;
+        let next_folder_name = sanitize_folder_name(&input.folder_name);
+
+        if let Some(client_id) = input.client_id {
+            let trimmed = client_id.trim().to_string();
+            if trimmed != inner.settings.client_id {
+                inner.settings.client_id = trimmed;
+                client_id_changed = true;
+                credentials_changed = true;
+            }
+        }
+        if let Some(secret) = input.client_secret {
+            let trimmed = secret.trim().to_string();
+            if !trimmed.is_empty() && trimmed != inner.settings.client_secret {
+                inner.settings.client_secret = trimmed;
+                credentials_changed = true;
+                secret_provided = true;
+            }
+        }
+        if client_id_changed && !secret_provided {
+            // A secret from a different OAuth client is useless — require a fresh one.
+            inner.settings.client_secret.clear();
+        }
+
+        if next_folder_name != inner.settings.folder_name {
+            inner.settings.folder_name = next_folder_name;
+            inner.settings.folder_id = None;
+        }
+
+        inner.settings.retention = input.retention.min(365);
+        inner.settings.compression_level = input.compression_level.clamp(0, 9);
+        inner.settings.respect_gitignore = input.respect_gitignore;
+        inner.settings.extra_ignore_patterns = input
+            .extra_ignore_patterns
+            .into_iter()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect();
+
+        if credentials_changed {
+            inner.tokens = None;
+            inner.settings.folder_id = None;
+        }
+    }
+
+    if st.lock().tokens.is_none() {
+        st.store.remove("auth.json");
+    }
+    st.save_settings()?;
+
+    Ok(st.snapshot(&app_data_string(&app), env!("CARGO_PKG_VERSION")))
+}
+
+#[tauri::command]
+pub async fn drive_connect(state: State<'_, AppState>) -> Result<DriveStatus, String> {
+    let st = (*state).clone();
+    let cancel = st.lock().auth_cancel.clone();
+    cancel.store(false, Ordering::SeqCst);
+    tauri::async_runtime::spawn_blocking(move || {
+        let (client_id, client_secret, folder_name, folder_id) = {
+            let inner = st.lock();
+            (
+                inner.settings.client_id.clone(),
+                inner.settings.client_secret.clone(),
+                inner.settings.folder_name.clone(),
+                inner.settings.folder_id.clone(),
+            )
+        };
+
+        if client_id.is_empty() || client_secret.is_empty() {
+            return Err(
+                "Add your Google OAuth Client ID and Client secret before connecting.".to_string(),
+            );
+        }
+
+        let cancel = st.lock().auth_cancel.clone();
+
+        let mut tokens = drive::run_oauth_flow(&client_id, &client_secret, cancel)?;
+
+        // Best-effort folder setup so Settings can deep-link into Drive right away.
+        if let Ok(access) = drive::ensure_access_token(&mut tokens, &client_id, &client_secret) {
+            if let Ok(client) = DriveClient::new(access) {
+                match client.ensure_folder(&folder_name, folder_id.as_deref()) {
+                    Ok(id) => {
+                        {
+                            let mut inner = st.lock();
+                            inner.settings.folder_id = Some(id);
+                        }
+                        let _ = st.save_settings();
+                    }
+                    Err(err) => {
+                        eprintln!("Drive folder setup deferred until first backup: {err}");
+                    }
+                }
+            }
+        }
+
+        {
+            let mut inner = st.lock();
+            inner.tokens = Some(tokens.clone());
+        }
+        st.save_tokens()?;
+
+        Ok(st.drive_status())
+    })
+    .await
+    .map_err(|e| format!("Google Drive connection task failed: {e}"))?
+}
+
+#[tauri::command]
+pub fn cancel_drive_auth(state: State<'_, AppState>) -> Result<(), String> {
+    let cancel = state.lock().auth_cancel.clone();
+    cancel.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn drive_disconnect(state: State<'_, AppState>) -> Result<(), String> {
+    {
+        let mut inner = state.lock();
+        inner.tokens = None;
+        inner.settings.folder_id = None;
+    }
+    state.save_tokens()?;
+    state.save_settings()?;
+    Ok(())
+}
+
+fn cleanup_old_backups(
+    state: &AppState,
+    client: &DriveClient,
+    project_id: &str,
+    retention: u32,
+    app: &AppHandle,
+    job_id: &str,
+) {
+    if retention == 0 {
+        return;
+    }
+
+    let excess: Vec<BackupRecord> = {
+        let inner = state.lock();
+        let mut list: Vec<BackupRecord> = inner
+            .backups
+            .iter()
+            .filter(|b| b.project_id == project_id)
+            .cloned()
+            .collect();
+        list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        list.into_iter().skip(retention as usize).collect()
+    };
+
+    if excess.is_empty() {
+        return;
+    }
+
+    let mut deleted: Vec<String> = Vec::new();
+    for record in &excess {
+        match client.delete_file(&record.file_id) {
+            Ok(()) => deleted.push(record.id.clone()),
+            Err(err) => {
+                eprintln!("Retention cleanup skipped {}: {err}", record.file_name);
+            }
+        }
+    }
+
+    if !deleted.is_empty() {
+        {
+            let mut inner = state.lock();
+            inner.backups.retain(|b| !deleted.contains(&b.id));
+        }
+        let _ = state.save_backups();
+        emit_backup(
+            app,
+            job_id,
+            "finalizing",
+            96.0,
+            format!(
+                "Removed {} older snapshot{} (keeping {})",
+                deleted.len(),
+                if deleted.len() == 1 { "" } else { "s" },
+                retention
+            ),
+            0,
+            0,
+            0,
+            0,
+        );
+    }
+}
+
+fn backup_blocking(
+    app: &AppHandle,
+    state: &AppState,
+    project_id: &str,
+    job_id: &str,
+) -> Result<BackupRecord, String> {
+    let outcome = (|| -> Result<BackupRecord, String> {
+        let project = state
+            .find_project(project_id)
+            .ok_or_else(|| "Project not found.".to_string())?;
+        let root = PathBuf::from(&project.path);
+        if !root.is_dir() {
+            return Err(format!(
+                "Project folder no longer exists: {}",
+                project.path
+            ));
+        }
+
+        let (settings, tokens) = {
+            let inner = state.lock();
+            (inner.settings.clone(), inner.tokens.clone())
+        };
+        let mut tokens = tokens.ok_or_else(|| {
+            "Google Drive is not connected. Connect it in Settings first.".to_string()
+        })?;
+        if tokens.refresh_token.is_empty() && tokens.access_token.is_empty() {
+            return Err("Google Drive is not connected. Connect it in Settings first.".to_string());
+        }
+
+        let cancel = state.lock().backup_cancel.clone();
+
+        emit_backup(
+            app,
+            job_id,
+            "scanning",
+            3.0,
+            "Reading .gitignore rules…".to_string(),
+            0,
+            0,
+            0,
+            0,
+        );
+
+        let mut last_scan_emit = Instant::now();
+        let mut scan_callback = |found: u64| {
+            if last_scan_emit.elapsed().as_millis() >= 160 {
+                emit_backup(
+                    app,
+                    job_id,
+                    "scanning",
+                    6.0,
+                    format!("Indexing project — {found} files selected"),
+                    found,
+                    0,
+                    0,
+                    0,
+                );
+                last_scan_emit = Instant::now();
+            }
+        };
+        let scan = scanner::scan_project(&root, &settings, 400, &cancel, &mut scan_callback)?;
+
+        if scan.files.is_empty() {
+            return Err("No files to back up after applying ignore rules.".to_string());
+        }
+
+        state.update_project_stats(project_id, scan.stats.clone())?;
+
+        emit_backup(
+            app,
+            job_id,
+            "scanning",
+            10.0,
+            format!(
+                "{} files selected · {} skipped by ignore rules",
+                scan.stats.included_files, scan.stats.ignored_files
+            ),
+            scan.stats.included_files,
+            scan.stats.included_files,
+            0,
+            0,
+        );
+
+        let access_token =
+            drive::ensure_access_token(&mut tokens, &settings.client_id, &settings.client_secret)?;
+        {
+            let mut inner = state.lock();
+            inner.tokens = Some(tokens.clone());
+        }
+        state.save_tokens()?;
+
+        let client = DriveClient::new(access_token)?;
+
+        if cancel.load(Ordering::Relaxed) {
+            return Err("Backup cancelled.".to_string());
+        }
+
+        let folder_id = client.ensure_folder(&settings.folder_name, settings.folder_id.as_deref())?;
+        {
+            let mut inner = state.lock();
+            inner.settings.folder_id = Some(folder_id.clone());
+        }
+        state.save_settings()?;
+
+        let file_name = format!(
+            "{}-{}.zip",
+            sanitize_file_name(&project.name),
+            chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
+        );
+
+        let temp_dir = std::env::temp_dir().join("ryz-projectup");
+        fs::create_dir_all(&temp_dir)
+            .map_err(|e| format!("Could not create temporary folder: {e}"))?;
+        let archive_path = temp_dir.join(format!("snapshot-{}.zip", Uuid::new_v4()));
+        let _archive_guard = TempFileGuard(archive_path.clone());
+
+        let total_to_archive = scan.stats.included_bytes.max(1);
+        let total_files = scan.stats.included_files.max(1);
+        emit_backup(
+            app,
+            job_id,
+            "archiving",
+            12.0,
+            "Compressing project files…".to_string(),
+            0,
+            total_files,
+            0,
+            total_to_archive,
+        );
+
+        let mut last_archive_emit = Instant::now();
+        let mut archive_callback = |done: u64, total: u64, files: u64| {
+            if last_archive_emit.elapsed().as_millis() >= 140 || done >= total {
+                let total = total.max(1);
+                let percent = 12.0 + (done as f64 / total as f64) * 43.0;
+                emit_backup(
+                    app,
+                    job_id,
+                    "archiving",
+                    percent,
+                    format!(
+                        "Compressing {} / {} files · {}",
+                        files,
+                        total_files,
+                        human_bytes(done)
+                    ),
+                    files,
+                    total_files,
+                    done,
+                    total,
+                );
+                last_archive_emit = Instant::now();
+            }
+        };
+
+        let archive = match archive::create_archive(
+            &scan.files,
+            &archive_path,
+            settings.compression_level,
+            total_to_archive,
+            &cancel,
+            &mut archive_callback,
+        ) {
+            Ok(archive) => archive,
+            Err(err) => {
+                let _ = fs::remove_file(&archive_path);
+                return Err(err);
+            }
+        };
+        let zip_size = archive.zip_size.max(1);
+        let file_count = archive.file_count;
+
+        if cancel.load(Ordering::Relaxed) {
+            let _ = fs::remove_file(&archive_path);
+            return Err("Backup cancelled.".to_string());
+        }
+
+        emit_backup(
+            app,
+            job_id,
+            "uploading",
+            58.0,
+            format!("Uploading {} snapshot to Google Drive…", human_bytes(zip_size)),
+            0,
+            0,
+            0,
+            zip_size,
+        );
+
+        let upload_app = app.clone();
+        let upload_job = job_id.to_string();
+        let mut last_upload_emit = Instant::now();
+        let progress: Box<dyn FnMut(u64, u64) + Send> = Box::new(move |done, total| {
+            if last_upload_emit.elapsed().as_millis() >= 120 || done >= total {
+                let total = total.max(1);
+                let percent = 58.0 + (done as f64 / total as f64) * 32.0;
+                emit_backup(
+                    &upload_app,
+                    &upload_job,
+                    "uploading",
+                    percent,
+                    format!(
+                        "Uploading to Google Drive · {} / {}",
+                        human_bytes(done),
+                        human_bytes(total)
+                    ),
+                    0,
+                    0,
+                    done,
+                    total,
+                );
+                last_upload_emit = Instant::now();
+            }
+        });
+
+        let uploaded = match client.upload_archive(
+            &archive_path,
+            &file_name,
+            &folder_id,
+            &project.id,
+            &project.name,
+            zip_size,
+            cancel.clone(),
+            progress,
+        ) {
+            Ok(uploaded) => uploaded,
+            Err(err) => {
+                let _ = fs::remove_file(&archive_path);
+                return Err(err);
+            }
+        };
+
+        emit_backup(
+            app,
+            job_id,
+            "finalizing",
+            94.0,
+            "Saving snapshot metadata…".to_string(),
+            file_count,
+            file_count,
+            zip_size,
+            zip_size,
+        );
+
+        let record = BackupRecord {
+            id: Uuid::new_v4().to_string(),
+            project_id: project.id.clone(),
+            project_name: project.name.clone(),
+            file_id: uploaded.id,
+            file_name: uploaded.name,
+            size_bytes: zip_size,
+            file_count,
+            created_at: now_iso(),
+            web_view_link: uploaded.web_view_link,
+        };
+
+        state.push_backup(record.clone())?;
+        cleanup_old_backups(state, &client, &project.id, settings.retention, app, job_id);
+
+        let _ = fs::remove_file(&archive_path);
+
+        emit_backup(
+            app,
+            job_id,
+            "done",
+            100.0,
+            "Snapshot uploaded to Google Drive".to_string(),
+            file_count,
+            file_count,
+            zip_size,
+            zip_size,
+        );
+
+        Ok(record)
+    })();
+
+    if let Err(err) = &outcome {
+        emit_backup(app, job_id, "error", 0.0, err.clone(), 0, 0, 0, 0);
+    }
+
+    outcome
+}
+
+#[tauri::command]
+pub async fn run_backup(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+    job_id: String,
+) -> Result<BackupRecord, String> {
+    let st = (*state).clone();
+    let cancel = st.lock().backup_cancel.clone();
+    cancel.store(false, Ordering::SeqCst);
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        backup_blocking(&handle, &st, &project_id, &job_id)
+    })
+    .await
+    .map_err(|e| format!("Backup task failed: {e}"))?
+}
+
+#[tauri::command]
+pub fn cancel_backup(state: State<'_, AppState>) -> Result<(), String> {
+    let cancel = state.lock().backup_cancel.clone();
+    cancel.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+fn restore_blocking(
+    app: &AppHandle,
+    state: &AppState,
+    backup_id: &str,
+    destination: &str,
+    job_id: &str,
+) -> Result<RestoreResult, String> {
+    let outcome = (|| -> Result<RestoreResult, String> {
+        let record = state
+            .find_backup(backup_id)
+            .ok_or_else(|| "Snapshot not found in local history.".to_string())?;
+
+        let (settings, tokens) = {
+            let inner = state.lock();
+            (inner.settings.clone(), inner.tokens.clone())
+        };
+        let mut tokens = tokens.ok_or_else(|| {
+            "Google Drive is not connected. Connect it in Settings first.".to_string()
+        })?;
+
+        emit_restore(
+            app,
+            job_id,
+            "downloading",
+            1.0,
+            "Authorizing with Google Drive…".to_string(),
+        );
+
+        let access =
+            drive::ensure_access_token(&mut tokens, &settings.client_id, &settings.client_secret)?;
+        {
+            let mut inner = state.lock();
+            inner.tokens = Some(tokens.clone());
+        }
+        state.save_tokens()?;
+
+        let client = DriveClient::new(access)?;
+
+        let temp_dir = std::env::temp_dir().join("ryz-projectup");
+        fs::create_dir_all(&temp_dir)
+            .map_err(|e| format!("Could not create temporary folder: {e}"))?;
+        let temp_zip = temp_dir.join(format!("restore-{}.zip", Uuid::new_v4()));
+        let _temp_guard = TempFileGuard(temp_zip.clone());
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut last_emit = Instant::now();
+        let mut download_progress = |done: u64, total: u64| {
+            if last_emit.elapsed().as_millis() >= 120 || done >= total {
+                let total = total.max(1);
+                let percent = 2.0 + (done as f64 / total as f64) * 53.0;
+                emit_restore(
+                    app,
+                    job_id,
+                    "downloading",
+                    percent,
+                    format!(
+                        "Downloading snapshot · {} / {}",
+                        human_bytes(done),
+                        human_bytes(total)
+                    ),
+                );
+                last_emit = Instant::now();
+            }
+        };
+
+        let downloaded =
+            match client.download_archive(&record.file_id, &temp_zip, &cancel, &mut download_progress)
+            {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    let _ = fs::remove_file(&temp_zip);
+                    return Err(err);
+                }
+            };
+        if downloaded == 0 {
+            let _ = fs::remove_file(&temp_zip);
+            return Err("Google Drive returned an empty snapshot.".to_string());
+        }
+
+        emit_restore(
+            app,
+            job_id,
+            "extracting",
+            58.0,
+            "Extracting project files…".to_string(),
+        );
+
+        let destination_root = PathBuf::from(destination);
+        if !destination_root.is_dir() {
+            let _ = fs::remove_file(&temp_zip);
+            return Err("The restore destination no longer exists.".to_string());
+        }
+
+        let base_name = sanitize_file_name(&record.project_name);
+        let mut target = destination_root.join(&base_name);
+        if target.exists() {
+            target = destination_root.join(format!(
+                "{}-restored-{}",
+                base_name,
+                chrono::Local::now().format("%Y%m%d-%H%M%S")
+            ));
+            let mut suffix = 1;
+            while target.exists() {
+                target = destination_root.join(format!(
+                    "{}-restored-{}-{}",
+                    base_name,
+                    chrono::Local::now().format("%Y%m%d-%H%M%S"),
+                    suffix
+                ));
+                suffix += 1;
+            }
+        }
+        fs::create_dir_all(&target)
+            .map_err(|e| format!("Could not create the restore folder: {e}"))?;
+
+        let mut last_extract_emit = Instant::now();
+        let mut extract_progress = |done: u64, total: u64| {
+            if last_extract_emit.elapsed().as_millis() >= 120 || done >= total {
+                let total = total.max(1);
+                let percent = 58.0 + (done as f64 / total as f64) * 41.0;
+                emit_restore(
+                    app,
+                    job_id,
+                    "extracting",
+                    percent,
+                    format!(
+                        "Extracting files · {} / {}",
+                        done,
+                        record.file_count.max(1)
+                    ),
+                );
+                last_extract_emit = Instant::now();
+            }
+        };
+
+        let extracted_files = match archive::extract_archive(
+            &temp_zip,
+            &target,
+            &cancel,
+            &mut extract_progress,
+        ) {
+            Ok(count) => count,
+            Err(err) => {
+                let _ = fs::remove_file(&temp_zip);
+                return Err(err);
+            }
+        };
+
+        let _ = fs::remove_file(&temp_zip);
+
+        emit_restore(
+            app,
+            job_id,
+            "done",
+            100.0,
+            "Restore complete".to_string(),
+        );
+
+        Ok(RestoreResult {
+            destination: target.to_string_lossy().to_string(),
+            file_count: extracted_files,
+        })
+    })();
+
+    if let Err(err) = &outcome {
+        emit_restore(app, job_id, "error", 0.0, err.clone());
+    }
+
+    outcome
+}
+
+#[tauri::command]
+pub async fn restore_backup(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    backup_id: String,
+    destination: String,
+    job_id: String,
+) -> Result<RestoreResult, String> {
+    let st = (*state).clone();
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        restore_blocking(&handle, &st, &backup_id, &destination, &job_id)
+    })
+    .await
+    .map_err(|e| format!("Restore task failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn delete_backup(
+    state: State<'_, AppState>,
+    backup_id: String,
+    delete_from_drive: bool,
+) -> Result<(), String> {
+    let st = (*state).clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let record = st
+            .find_backup(&backup_id)
+            .ok_or_else(|| "Snapshot not found in local history.".to_string())?;
+
+        if delete_from_drive {
+            let (settings, tokens) = {
+                let inner = st.lock();
+                (inner.settings.clone(), inner.tokens.clone())
+            };
+            let mut tokens = tokens.ok_or_else(|| {
+                "Google Drive is not connected. Reconnect it to delete the cloud file.".to_string()
+            })?;
+            let access =
+                drive::ensure_access_token(&mut tokens, &settings.client_id, &settings.client_secret)?;
+            {
+                let mut inner = st.lock();
+                inner.tokens = Some(tokens.clone());
+            }
+            st.save_tokens()?;
+            let client = DriveClient::new(access)?;
+            client.delete_file(&record.file_id)?;
+        }
+
+        {
+            let mut inner = st.lock();
+            inner.backups.retain(|b| b.id != backup_id);
+        }
+        st.save_backups()?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Delete task failed: {e}"))?
+}
+
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    let parsed = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("Only http(s) links can be opened.".to_string());
+    }
+    open::that(parsed.as_str()).map_err(|e| format!("Could not open the link: {e}"))
+}
+
+#[tauri::command]
+pub fn reveal_path(path: String) -> Result<(), String> {
+    let target = PathBuf::from(&path);
+    if !target.exists() {
+        return Err("That path no longer exists.".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        if target.is_dir() {
+            Command::new("explorer")
+                .arg(&target)
+                .spawn()
+                .map_err(|e| format!("Could not open Explorer: {e}"))?;
+        } else {
+            Command::new("explorer")
+                .arg(format!("/select,{}", target.display()))
+                .spawn()
+                .map_err(|e| format!("Could not open Explorer: {e}"))?;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        if target.is_dir() {
+            Command::new("open")
+                .arg(&target)
+                .spawn()
+                .map_err(|e| format!("Could not open Finder: {e}"))?;
+        } else {
+            Command::new("open")
+                .arg("-R")
+                .arg(&target)
+                .spawn()
+                .map_err(|e| format!("Could not open Finder: {e}"))?;
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        use std::process::Command;
+        let open_target = if target.is_dir() {
+            target.clone()
+        } else {
+            target
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| target.clone())
+        };
+        Command::new("xdg-open")
+            .arg(open_target)
+            .spawn()
+            .map_err(|e| format!("Could not open the file manager: {e}"))?;
+    }
+
+    Ok(())
+}
