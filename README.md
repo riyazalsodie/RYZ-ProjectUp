@@ -83,8 +83,8 @@ Grab the latest **beta** from the [Releases page](https://github.com/riyazalsodi
 
 | Build | File | Notes |
 | --- | --- | --- |
-| Windows installer | `RYZ ProjectUp 0.1.0-beta.1 Setup.exe` | NSIS, per-user install, no admin required |
-| Windows portable | `RYZ ProjectUp 0.1.0-beta.1.exe` | Run from any folder |
+| Windows installer | `RYZ.ProjectUp.0.1.0-beta.1.Setup.exe` | NSIS, per-user install, no admin required |
+| Windows portable | `RYZ.ProjectUp.0.1.0-beta.1.exe` | Run from any folder |
 
 **Requirements:** Windows 10/11 with the WebView2 runtime (preinstalled on modern Windows). macOS and Linux build from source; beta testing is currently Windows-first.
 
