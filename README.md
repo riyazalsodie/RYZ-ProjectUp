@@ -25,6 +25,7 @@
   <a href="#quick-start">Quick start</a> ·
   <a href="#google-drive-setup">Google Drive setup</a> ·
   <a href="#development">Development</a> ·
+  <a href="#code-signing-policy">Code signing policy</a> ·
   <a href="#beta-notes">Beta notes</a>
 </p>
 
@@ -116,7 +117,7 @@ Grab the latest **beta** from the [Releases page](https://github.com/riyazalsodi
 
 **Requirements:** Windows 10/11 with the WebView2 runtime (preinstalled on modern Windows). macOS and Linux build from source; beta testing is currently Windows-first.
 
-> The beta installer is **unsigned**. Windows SmartScreen may show “Windows protected your PC” — choose **More info → Run anyway** if you downloaded it from this repository's Releases page.
+> The current beta artifacts are **unsigned** while free trusted signing is being set up through SignPath Foundation. Windows SmartScreen may show “Windows protected your PC” — choose **More info → Run anyway** if you downloaded from this repository's Releases page. Do not treat a self-signed build as trusted. See the [code signing policy](CODE_SIGNING.md).
 
 ---
 
@@ -318,6 +319,16 @@ Backup, restore and scheduled-backup progress is streamed to the UI through `bac
 
 ---
 
+## Code signing policy
+
+**Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).**
+
+The project's signing roles, build provenance, artifact scope, and privacy statement are documented in [CODE_SIGNING.md](CODE_SIGNING.md). The owner setup checklist is in [docs/SIGNPATH.md](docs/SIGNPATH.md).
+
+Current status: **unsigned pending SignPath onboarding**. Only artifacts attached to a release after completing the SignPath workflow should be described as SignPath-signed.
+
+---
+
 ## Security & privacy
 
 - **No RYZ servers.** Scanning, zipping and extracting happen locally. Uploads go from your PC directly to Google Drive.
@@ -361,6 +372,7 @@ Known limitations / not yet included:
 - One Drive destination folder per configuration
 - No auto-update channel yet
 - Requires your own Google OAuth client
+- Current artifacts are unsigned pending free SignPath Foundation onboarding
 - Windows is the primary tested target; macOS/Linux builds are source-supported
 
 ### Roadmap
