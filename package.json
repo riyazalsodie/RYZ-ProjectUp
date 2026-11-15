@@ -1,7 +1,7 @@
 {
   "name": "ryz-projectup",
   "private": false,
-  "version": "0.4.0-beta.1",
+  "version": "0.4.1-beta.1",
   "description": "Git-aware project backup vault for Google Drive — built with Rust, Tauri 2, React, TypeScript and shadcn/ui.",
   "author": "R ! Y 4 Z",
   "license": "MIT",

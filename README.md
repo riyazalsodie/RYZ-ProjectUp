@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/riyazalsodie/RYZ-ProjectUp/releases"><img alt="Status: Beta" src="https://img.shields.io/badge/status-beta-00ff88?style=flat-square" /></a>
   <a href="https://github.com/riyazalsodie/RYZ-ProjectUp/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/riyazalsodie/RYZ-ProjectUp/actions/workflows/ci.yml/badge.svg" /></a>
-  <img alt="Version 0.4.0-beta.1" src="https://img.shields.io/badge/version-0.4.0--beta.1-00ff88?style=flat-square" />
+  <img alt="Version 0.4.1-beta.1" src="https://img.shields.io/badge/version-0.4.1--beta.1-00ff88?style=flat-square" />
   <img alt="Platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0b0f0d?style=flat-square" />
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white" />
   <img alt="Rust" src="https://img.shields.io/badge/Rust-1.88%2B-000000?style=flat-square&logo=rust" />
@@ -59,7 +59,7 @@ Select a folder  →  Read ignore rules  →  Build zip locally  →  Upload to 
 | **Backup history** | Search, open in Drive, restore or delete every snapshot from one place. |
 | **Bulk backups** | Back up every available project in one run, with a live “x / y” indicator and a stop control. |
 | **Scheduled backups** | Set one interval from 6 hours to a week. Each project is checked against its own newest snapshot, so a recent backup in one project never blocks another. |
-| **System tray mode** | Minimize or close to the tray, reopen from the tray icon, or start **Back up all** from its menu. ProjectUp can keep running while the window is hidden. |
+| **System tray mode** | Minimize or close to the tray, reopen from the tray icon, or start **Back up all** from its menu. ProjectUp keeps a single instance and restores the existing window when launched again. |
 | **Launch at startup** | Start quietly in the tray at login so due snapshots can run without opening the dashboard. |
 | **Global backup hotkey** | Press `Ctrl+Shift+B` from any app to bring ProjectUp forward and run **Back up all**. It can be disabled in Settings. |
 | **Drive vault index** | Projects, original folders and snapshot history are saved to a private `ryz-projectup-vault.json` in your Drive folder. Connect from a new PC and the whole vault comes back. |
@@ -101,7 +101,7 @@ Open **Settings → Automation & background** to configure:
 - **Global backup hotkey** — `Ctrl+Shift+B` runs **Back up all** system-wide and brings the window forward. It is enabled by default and can be switched off if the combination is already in use.
 - **Quit ProjectUp** — exits fully. If you use close-to-tray, this is the explicit way to stop the process and pause the schedule.
 
-The tray menu also has **Open ProjectUp**, **Back up all now** and **Quit ProjectUp**.
+Only one ProjectUp process runs at a time. Launching the app again (without `--hidden`) brings the existing tray window forward instead of starting a second scheduler. The tray menu also has **Open ProjectUp**, **Back up all now** and **Quit ProjectUp**.
 
 ---
 
@@ -111,8 +111,8 @@ Grab the latest **beta** from the [Releases page](https://github.com/riyazalsodi
 
 | Build | File | Notes |
 | --- | --- | --- |
-| Windows installer | `RYZ.ProjectUp.0.4.0-beta.1.Setup.exe` | NSIS, per-user install, no admin required |
-| Windows portable | `RYZ.ProjectUp.0.4.0-beta.1.exe` | Run from any folder |
+| Windows installer | `RYZ.ProjectUp.0.4.1-beta.1.Setup.exe` | NSIS, per-user install, no admin required |
+| Windows portable | `RYZ.ProjectUp.0.4.1-beta.1.exe` | Run from any folder |
 
 **Requirements:** Windows 10/11 with the WebView2 runtime (preinstalled on modern Windows). macOS and Linux build from source; beta testing is currently Windows-first.
 
@@ -345,6 +345,7 @@ This is the first public beta. What works today:
 - Relink missing project folders after moving PCs
 - Scheduled backups with independent per-project due checks
 - System tray mode, launch at startup and minimize/close-to-tray controls
+- Single-instance tray app; relaunching reveals the existing window
 - Global `Ctrl+Shift+B` backup hotkey
 - In-app Google OAuth setup guide
 - OLED desktop UI and native window controls

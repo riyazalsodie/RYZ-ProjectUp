@@ -4,6 +4,13 @@ All notable changes to RYZ ProjectUp are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.1-beta.1] — 2026-11-15
+
+### Fixed
+
+- Re-launching ProjectUp now focuses the existing instance instead of opening a second tray process that could race the same vault.
+- A duplicate autostart launch with `--hidden` stays quiet rather than pulling the tray window forward.
+
 ## [0.4.0-beta.1] — 2026-11-15
 
 ### Added
@@ -149,3 +156,4 @@ Initial public beta.
 [0.2.0-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.2.0-beta.1
 [0.3.0-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.3.0-beta.1
 [0.4.0-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.4.0-beta.1
+[0.4.1-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.4.1-beta.1
