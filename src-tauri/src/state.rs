@@ -3,9 +3,10 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::models::{
-    now_iso, AppSnapshot, BackupRecord, DriveStatus, DriveTokens, Project, ProjectStats,
-    ProjectView, PublicSettings, Settings, CloudVault,
+    CloudVault, DriveStatus, DriveTokens, Project, ProjectStats, ProjectView, PublicSettings,
+    Settings, now_iso, AppSnapshot, BackupRecord,
 };
+use crate::secrets::{self, Secrets};
 use crate::store::Store;
 
 pub struct Inner {
@@ -28,10 +29,28 @@ impl AppState {
         let store = Store::new(data_dir)?;
         let projects: Vec<Project> = store.load_or_default("projects.json");
         let backups: Vec<BackupRecord> = store.load_or_default("backups.json");
-        let settings: Settings = store.load_or_default("settings.json");
-        let tokens: Option<DriveTokens> = store.load("auth.json");
+        let mut settings: Settings = store.load_or_default("settings.json");
+        let legacy_tokens: Option<DriveTokens> = store.load("auth.json");
 
-        Ok(Self {
+        // Users upgrading from the first beta had only three OS-junk defaults.
+        // Replace that exact set with the expanded security/build defaults.
+        const LEGACY_DEFAULTS: [&str; 3] = [".DS_Store", "Thumbs.db", "desktop.ini"];
+        if settings.extra_ignore_patterns.len() == LEGACY_DEFAULTS.len()
+            && LEGACY_DEFAULTS
+                .iter()
+                .all(|legacy| settings.extra_ignore_patterns.iter().any(|value| value == legacy))
+        {
+            settings.extra_ignore_patterns = Settings::default().extra_ignore_patterns;
+        }
+
+        let secrets = secrets::load(store.data_dir()).unwrap_or_else(|| Secrets {
+            client_secret: settings.client_secret.clone(),
+            tokens: legacy_tokens,
+        });
+        settings.client_secret = secrets.client_secret.clone();
+        let tokens = secrets.tokens.clone();
+
+        let state = Self {
             store,
             inner: Arc::new(Mutex::new(Inner {
                 projects,
@@ -41,7 +60,14 @@ impl AppState {
                 backup_cancel: Arc::new(AtomicBool::new(false)),
                 auth_cancel: Arc::new(AtomicBool::new(false)),
             })),
-        })
+        };
+
+        // Persist the encrypted blob before stripping any legacy plaintext
+        // secret from settings.json.
+        state.save_secrets()?;
+        state.save_settings()?;
+        state.store.remove("auth.json");
+        Ok(state)
     }
 
     pub fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -60,18 +86,25 @@ impl AppState {
 
     pub fn save_settings(&self) -> Result<(), String> {
         let settings = self.lock().settings.clone();
-        self.store.save("settings.json", &settings)
+        self.store.save("settings.json", &settings)?;
+        self.save_secrets()
     }
 
     pub fn save_tokens(&self) -> Result<(), String> {
-        let tokens = self.lock().tokens.clone();
-        match tokens {
-            Some(tokens) => self.store.save("auth.json", &tokens),
-            None => {
-                self.store.remove("auth.json");
-                Ok(())
+        self.save_secrets()
+    }
+
+    pub fn save_secrets(&self) -> Result<(), String> {
+        let secrets = {
+            let inner = self.lock();
+            Secrets {
+                client_secret: inner.settings.client_secret.clone(),
+                tokens: inner.tokens.clone(),
             }
-        }
+        };
+        secrets::save(self.store.data_dir(), &secrets)?;
+        self.store.remove("auth.json");
+        Ok(())
     }
 
     pub fn project_view(&self, project: &Project, backups: &[BackupRecord]) -> ProjectView {
@@ -185,6 +218,8 @@ impl AppState {
             drive,
             version: version.to_string(),
             data_dir: data_dir.to_string(),
+            secure_storage: secrets::secure_storage_available(),
+            secure_storage_label: secrets::secure_storage_label().to_string(),
         }
     }
 

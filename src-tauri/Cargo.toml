@@ -1,11 +1,10 @@
 [package]
 name = "ryz-projectup"
-version = "0.2.0-beta.1"
+version = "0.3.0-beta.1"
 description = "Git-aware project backups to Google Drive — a modern Tauri desktop vault."
 authors = ["R ! Y 4 Z"]
 license = "MIT"
 repository = "https://github.com/riyazalsodie/RYZ-ProjectUp"
-homepage = "https://github.com/riyazalsodie/RYZ-ProjectUp"
 keywords = ["tauri", "backup", "google-drive", "gitignore", "desktop"]
 categories = ["filesystem", "gui", "utility"]
 edition = "2021"
@@ -35,3 +34,9 @@ sha2 = "0.10"
 rand = "0.8"
 url = "2"
 open = "5.3"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",
+] }

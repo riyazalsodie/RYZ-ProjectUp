@@ -1,9 +1,11 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
+import { toast } from "sonner";
 import {
   ArrowUpFromLine,
   Check,
   Clock3,
+  Copy,
   Eye,
   FileWarning,
   FolderOpen,
@@ -62,6 +64,15 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
       await onRefreshStats(project);
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const handleCopyPath = async () => {
+    try {
+      await navigator.clipboard.writeText(project.path);
+      toast.success("Project path copied");
+    } catch {
+      toast.error("Could not copy the project path");
     }
   };
 
@@ -205,6 +216,10 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               <DropdownMenuItem onClick={() => onRelink(project)}>
                 <FolderSearch className="h-3.5 w-3.5 text-primary/70" />
                 Relink folder…
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleCopyPath}>
+                <Copy className="h-3.5 w-3.5 text-neutral-500" />
+                Copy project path
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => onPreview(project)}

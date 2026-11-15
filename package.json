@@ -1,7 +1,7 @@
 {
   "name": "ryz-projectup",
   "private": false,
-  "version": "0.2.0-beta.1",
+  "version": "0.3.0-beta.1",
   "description": "Git-aware project backup vault for Google Drive — built with Rust, Tauri 2, React, TypeScript and shadcn/ui.",
   "author": "R ! Y 4 Z",
   "license": "MIT",
@@ -36,6 +36,7 @@
     "@radix-ui/react-dropdown-menu": "^2.1.2",
     "@radix-ui/react-label": "^2.1.0",
     "@radix-ui/react-progress": "^1.1.0",
+    "@radix-ui/react-select": "^2.4.1",
     "@radix-ui/react-separator": "^1.1.0",
     "@radix-ui/react-slot": "^1.1.0",
     "@radix-ui/react-switch": "^1.1.1",

@@ -3,8 +3,6 @@ import {
   AlertTriangle,
   ArrowUpFromLine,
   Check,
-  CheckCircle2,
-  ExternalLink,
   FileArchive,
   FolderGit2,
   Loader2,
@@ -24,7 +22,8 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { formatBytes, formatDateTime, formatNumber, projectInitials, tileColor } from "@/utils/format";
+import { BackupSuccessView } from "@/components/BackupSuccessView";
+import { formatBytes, formatNumber, projectInitials, tileColor } from "@/utils/format";
 import { cn } from "@/lib/utils";
 
 interface BackupProgressDialogProps {
@@ -63,6 +62,7 @@ export const BackupProgressDialog: React.FC<BackupProgressDialogProps> = ({
   const current = phaseIndex(job.progress.phase);
   const pct = Math.min(100, Math.max(0, Math.round(job.progress.percent)));
   const record = job.record;
+  const success = job.status === "success" && !!record;
 
   return (
     <Dialog
@@ -73,7 +73,7 @@ export const BackupProgressDialog: React.FC<BackupProgressDialogProps> = ({
     >
       <DialogContent
         hideClose
-        className="max-w-md"
+        className={cn(success ? "max-w-lg" : "max-w-md")}
         onEscapeKeyDown={(e) => {
           if (running) e.preventDefault();
         }}
@@ -81,30 +81,35 @@ export const BackupProgressDialog: React.FC<BackupProgressDialogProps> = ({
           if (running) e.preventDefault();
         }}
       >
-        <DialogHeader>
-          <div className="flex items-center gap-3">
-            <div
-              className={cn(
-                "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border bg-gradient-to-br text-sm font-bold",
-                tileColor(job.project.name)
-              )}
-            >
-              {projectInitials(job.project.name)}
-            </div>
-            <div className="min-w-0">
-              <DialogTitle className="truncate">
-                {running
-                  ? "Creating snapshot"
-                  : job.status === "success"
-                    ? "Backup complete"
+        {success && record ? (
+          <DialogHeader className="sr-only">
+            <DialogTitle>Backup complete</DialogTitle>
+            <DialogDescription>{job.project.name} snapshot uploaded to Google Drive.</DialogDescription>
+          </DialogHeader>
+        ) : (
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div
+                className={cn(
+                  "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border bg-gradient-to-br text-sm font-bold",
+                  tileColor(job.project.name)
+                )}
+              >
+                {projectInitials(job.project.name)}
+              </div>
+              <div className="min-w-0">
+                <DialogTitle className="truncate">
+                  {running
+                    ? "Creating snapshot"
                     : job.status === "cancelled"
                       ? "Backup cancelled"
                       : "Backup failed"}
-              </DialogTitle>
-              <DialogDescription className="truncate">{job.project.name}</DialogDescription>
+                </DialogTitle>
+                <DialogDescription className="truncate">{job.project.name}</DialogDescription>
+              </div>
             </div>
-          </div>
-        </DialogHeader>
+          </DialogHeader>
+        )}
 
         {running ? (
           <div className="space-y-5">
@@ -186,45 +191,13 @@ export const BackupProgressDialog: React.FC<BackupProgressDialogProps> = ({
               </Button>
             </div>
           </div>
-        ) : job.status === "success" && record ? (
-          <div className="space-y-4">
-            <div className="flex flex-col items-center rounded-2xl border border-primary/20 bg-primary/[0.04] px-4 py-6 text-center">
-              <div className="relative mb-3 flex h-14 w-14 items-center justify-center rounded-full border border-primary/30 bg-primary/15 text-primary shadow-[0_0_40px_-10px_rgba(0,255,136,0.65)]">
-                <CheckCircle2 className="h-7 w-7" />
-              </div>
-              <p className="text-sm font-semibold text-white">Snapshot uploaded to Drive</p>
-              <p className="mt-1 max-w-xs truncate text-[10px] text-neutral-500">{record.file_name}</p>
-              <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[10px] text-neutral-400">
-                <span className="rounded-full border border-white/[0.07] bg-black/30 px-2.5 py-1">
-                  {formatNumber(record.file_count)} files
-                </span>
-                <span className="rounded-full border border-white/[0.07] bg-black/30 px-2.5 py-1">
-                  {formatBytes(record.size_bytes)}
-                </span>
-                <span className="rounded-full border border-white/[0.07] bg-black/30 px-2.5 py-1">
-                  {formatDateTime(record.created_at)}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-              {record.web_view_link ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => onOpenDrive(record.web_view_link as string)}
-                  className="gap-1.5"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  View in Drive
-                </Button>
-              ) : null}
-              <Button size="sm" onClick={onClose} className="gap-1.5">
-                <Check className="h-3.5 w-3.5" />
-                Done
-              </Button>
-            </div>
-          </div>
+        ) : success && record ? (
+          <BackupSuccessView
+            project={job.project}
+            record={record}
+            onClose={onClose}
+            onOpenDrive={onOpenDrive}
+          />
         ) : job.status === "cancelled" ? (
           <div className="space-y-4">
             <div className="flex items-center gap-3 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3">

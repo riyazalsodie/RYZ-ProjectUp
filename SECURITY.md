@@ -4,7 +4,8 @@
 
 | Version | Supported |
 | --- | --- |
-| `0.2.x-beta` | ✅ |
+| `0.3.x-beta` | ✅ |
+| `0.2.x-beta` | ❌ (please update) |
 | `0.1.x-beta` | ❌ (please update) |
 
 RYZ ProjectUp is currently a beta. Security fixes will be shipped in the latest beta.
@@ -31,7 +32,7 @@ You will get an acknowledgement as soon as possible. Please give us a reasonable
 - Scanning, compression and extraction run locally in the Rust backend.
 - Uploads go directly from the user's machine to Google Drive using the user's own OAuth client.
 - The app requests only the `https://www.googleapis.com/auth/drive.file` scope.
-- OAuth credentials and refresh tokens are stored in the local app data directory (`%APPDATA%\com.ryz.projectup` on Windows) as local JSON, **not encrypted at rest**. Protect the user account and disk accordingly.
+- OAuth credentials and refresh tokens are stored in `secrets.bin` inside the local app data directory. On Windows this blob is encrypted with **Windows DPAPI** and bound to the current Windows user. On macOS/Linux beta builds, OS secure storage is not wired up yet; protect the account and disk accordingly.
 - Backup snapshots are compressed zip archives and are **not encrypted** by ProjectUp. They are only as private as the Google account / Drive folder that holds them.
 - The current beta installer is unsigned.
 

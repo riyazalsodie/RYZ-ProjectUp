@@ -9,6 +9,7 @@ import {
   BackupJobState,
   BackupProgress,
   BackupRecord,
+  BulkBackupState,
   DriveStatus,
   Project,
   RestoreJobState,
@@ -62,6 +63,9 @@ const App: React.FC = () => {
   const [backupJob, setBackupJob] = useState<BackupJobState | null>(null);
   const [restoreJob, setRestoreJob] = useState<RestoreJobState | null>(null);
   const [deleteRecord, setDeleteRecord] = useState<BackupRecord | null>(null);
+  const [bulkBackup, setBulkBackup] = useState<BulkBackupState | null>(null);
+  const bulkCancelRef = useRef(false);
+  const bulkRunningRef = useRef(false);
 
   const [driveDialogOpen, setDriveDialogOpen] = useState(false);
   const [driveConnecting, setDriveConnecting] = useState(false);
@@ -229,6 +233,10 @@ const App: React.FC = () => {
   };
 
   const handleStartBackup = async (project: Project) => {
+    if (bulkBackup) {
+      toast.info("A bulk backup is already running");
+      return;
+    }
     if (!snapshot?.drive.connected) {
       toast.error("Connect Google Drive first", {
         description: "ProjectUp needs an authorized Drive account to upload snapshots.",
@@ -292,6 +300,83 @@ const App: React.FC = () => {
       toast.info("Cancelling backup…");
     } catch (err) {
       toast.error("Could not cancel", { description: errorMessage(err) });
+    }
+  };
+
+  const handleBackupAll = async () => {
+    if (!snapshot || bulkRunningRef.current || backupJob?.status === "running" || restoreJob?.status === "running") {
+      return;
+    }
+    if (!snapshot.drive.connected) {
+      toast.error("Connect Google Drive first", {
+        description: "Bulk backups need an authorized Drive account.",
+      });
+      setDriveDialogOpen(true);
+      return;
+    }
+
+    const eligible = snapshot.projects.filter((project) => project.path_available);
+    if (eligible.length === 0) {
+      toast.info("No available project folders", {
+        description: "Relink missing folders before running a bulk backup.",
+      });
+      return;
+    }
+
+    bulkRunningRef.current = true;
+    bulkCancelRef.current = false;
+    let completed = 0;
+    const failed: string[] = [];
+    let cancelled = false;
+
+    try {
+      for (let index = 0; index < eligible.length; index += 1) {
+        if (bulkCancelRef.current) {
+          cancelled = true;
+          break;
+        }
+        const project = eligible[index];
+        setBulkBackup({ current: index, total: eligible.length, projectName: project.name });
+        try {
+          await invoke("run_backup", { projectId: project.id, jobId: crypto.randomUUID() });
+          completed += 1;
+        } catch (err) {
+          const message = errorMessage(err);
+          if (/cancel/i.test(message)) {
+            cancelled = true;
+            break;
+          }
+          failed.push(project.name);
+        }
+      }
+    } finally {
+      setBulkBackup(null);
+      bulkRunningRef.current = false;
+      await safeRefresh();
+
+      if (cancelled) {
+        toast.info("Bulk backup cancelled", {
+          description: `${completed} of ${eligible.length} projects backed up`,
+        });
+      } else if (failed.length > 0) {
+        toast.error(`Backed up ${completed} of ${eligible.length} projects`, {
+          description: `Failed: ${failed.join(", ")}`,
+        });
+      } else {
+        toast.success("All projects backed up", {
+          description: `${completed} snapshots uploaded to Google Drive`,
+        });
+      }
+    }
+  };
+
+  const handleCancelBulkBackup = async () => {
+    bulkCancelRef.current = true;
+    try {
+      await invoke("cancel_backup");
+      toast.info("Stopping bulk backup…");
+    } catch (err) {
+      toast.error("Could not cancel bulk backup", { description: errorMessage(err) });
     }
   };
 
@@ -459,11 +544,13 @@ const App: React.FC = () => {
     }
   };
 
-  const statusLabel = backupJob?.status === "running"
-    ? `Backing up ${backupJob.project.name}`
-    : restoreJob?.status === "running"
-      ? "Restoring snapshot"
-      : null;
+  const statusLabel = bulkBackup
+    ? `Backing up ${bulkBackup.projectName} (${bulkBackup.current + 1}/${bulkBackup.total})`
+    : backupJob?.status === "running"
+      ? `Backing up ${backupJob.project.name}`
+      : restoreJob?.status === "running"
+        ? "Restoring snapshot"
+        : null;
 
   if (loading) {
     return (
@@ -562,6 +649,9 @@ const App: React.FC = () => {
                 onSearch={setSearch}
                 onAddProject={handleAddProject}
                 onBackup={handleStartBackup}
+                onBackupAll={handleBackupAll}
+                onCancelBulkBackup={handleCancelBulkBackup}
+                bulkBackup={bulkBackup}
                 onPreview={(project) => setPreviewProject(project)}
                 onReveal={handleReveal}
                 onRelink={handleRelinkProject}

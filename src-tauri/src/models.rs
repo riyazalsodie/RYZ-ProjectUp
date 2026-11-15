@@ -67,7 +67,7 @@ pub struct DriveStatus {
 pub struct Settings {
     #[serde(default)]
     pub client_id: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub client_secret: String,
     #[serde(default = "default_folder_name")]
     pub folder_name: String,
@@ -100,11 +100,48 @@ fn default_true() -> bool {
 }
 
 fn default_extra_patterns() -> Vec<String> {
-    vec![
-        ".DS_Store".to_string(),
-        "Thumbs.db".to_string(),
-        "desktop.ini".to_string(),
+    [
+        "node_modules/",
+        "bower_components/",
+        "dist/",
+        "build/",
+        "out/",
+        "target/",
+        "obj/",
+        ".next/",
+        ".nuxt/",
+        ".svelte-kit/",
+        ".turbo/",
+        ".cache/",
+        ".parcel-cache/",
+        "coverage/",
+        ".nyc_output/",
+        ".idea/",
+        ".vscode/",
+        ".gradle/",
+        ".dart_tool/",
+        "Pods/",
+        "DerivedData/",
+        "__pycache__/",
+        ".venv/",
+        "venv/",
+        "*.log",
+        "*.tmp",
+        "*.swp",
+        "*~",
+        ".env",
+        ".env.*",
+        "*.pem",
+        "*.key",
+        "*.p12",
+        "*.pfx",
+        ".DS_Store",
+        "Thumbs.db",
+        "desktop.ini",
     ]
+    .iter()
+    .map(|pattern| pattern.to_string())
+    .collect()
 }
 
 impl Default for Settings {
@@ -202,6 +239,8 @@ pub struct AppSnapshot {
     pub drive: DriveStatus,
     pub version: String,
     pub data_dir: String,
+    pub secure_storage: bool,
+    pub secure_storage_label: String,
 }
 
 #[derive(Serialize, Clone, Debug)]

@@ -21,6 +21,8 @@ yarn-error.log*
 !.env.example
 auth.json
 settings.json
+secrets.bin
+secrets.bin.tmp
 
 # Editor and OS
 .vscode/*

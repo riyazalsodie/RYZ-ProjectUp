@@ -1,16 +1,18 @@
 import React, { useMemo, useState } from "react";
 import {
+  ArrowUpFromLine,
   Cloud,
   CloudOff,
   FolderGit2,
   Files,
+  Loader2,
   Search,
   X,
   Clock3,
   Sparkles,
   SlidersHorizontal,
 } from "lucide-react";
-import { AppSnapshot, Project } from "@/types";
+import { AppSnapshot, BulkBackupState, Project } from "@/types";
 import { EmptyState } from "@/components/EmptyState";
 import { ProjectCard } from "@/components/ProjectCard";
 import { StatCard } from "@/components/StatCard";
@@ -29,6 +31,9 @@ interface ProjectsPageProps {
   onSearch: (value: string) => void;
   onAddProject: () => void;
   onBackup: (project: Project) => void;
+  onBackupAll: () => void;
+  onCancelBulkBackup: () => void;
+  bulkBackup: BulkBackupState | null;
   onPreview: (project: Project) => void;
   onReveal: (path: string) => void;
   onRelink: (project: Project) => void;
@@ -46,6 +51,9 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
   onSearch,
   onAddProject,
   onBackup,
+  onBackupAll,
+  onCancelBulkBackup,
+  bulkBackup,
   onPreview,
   onReveal,
   onRelink,
@@ -94,18 +102,18 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
           <div>
             <div className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-[0.18em] text-primary/70">
               <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_8px_#00ff88]" />
-              Personal backup vault
+              Backup workspace
             </div>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white">
-              Your projects, <span className="text-primary text-glow">safely vaulted.</span>
+              Project backups<span className="text-primary">.</span>
             </h1>
             <p className="mt-1.5 max-w-xl text-xs leading-relaxed text-neutral-500">
-              Git-aware snapshots — ProjectUp reads each folder&apos;s ignore rules, skips the noise, and
-              sends the rest straight to your Google Drive.
+              Pick a folder, skip everything Git ignores, and send a compressed snapshot straight to Google
+              Drive.
             </p>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
             {drive.connected ? (
               <Button variant="secondary" size="sm" onClick={onOpenDriveFolder} className="gap-1.5">
                 <Cloud className="h-3.5 w-3.5 text-primary" />
@@ -117,6 +125,25 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
                 Connect Drive
               </Button>
             )}
+            {projects.length > 0 ? (
+              bulkBackup ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={onCancelBulkBackup}
+                  className="gap-1.5"
+                  title="Cancel the bulk backup"
+                >
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                  Stop bulk ({bulkBackup.current + 1}/{bulkBackup.total})
+                </Button>
+              ) : (
+                <Button variant="secondary" size="sm" onClick={onBackupAll} className="gap-1.5">
+                  <ArrowUpFromLine className="h-3.5 w-3.5" />
+                  Back up all
+                </Button>
+              )
+            ) : null}
             <Button onClick={onAddProject} loading={adding} className="gap-2 px-4">
               <FolderGit2 className="h-3.5 w-3.5" />
               Add project
@@ -269,8 +296,7 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
         {projects.length > 0 ? (
           <p className="mt-5 flex items-center justify-center gap-1.5 text-center text-[10px] text-neutral-700">
             <Sparkles className="h-3 w-3 text-primary/40" />
-            Every snapshot is created locally, then streamed directly to Google Drive with the file-scoped
-            Drive permission.
+            Snapshots are built locally and streamed directly to Google Drive.
           </p>
         ) : null}
       </div>

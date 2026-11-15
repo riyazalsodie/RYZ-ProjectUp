@@ -4,6 +4,40 @@ All notable changes to RYZ ProjectUp are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.0-beta.1] — 2026-11-15
+
+### Added
+
+- Animated backup completion screen with a spring check mark, confetti burst, staggered details and quick Drive access
+- Custom animated, rounded dropdowns for retention and compression
+- **Back up all** projects in one run with a live progress indicator and stop control
+- **Copy project path** in the project actions menu
+- Expanded default ignore set covering common build folders, dependency caches, IDE folders, logs and secret files
+- Automatic migration of the old three-pattern default list to the expanded defaults
+- Google OAuth Client secret + access/refresh tokens now stored in `secrets.bin`, encrypted with **Windows DPAPI** and bound to the current Windows user
+- Encrypted/Local storage indicator in Settings → Local data & privacy
+- Success screen screenshot and new README screenshots
+
+### Changed
+
+- Cleaner dashboard copy and headings (removed the “safely vaulted” marketing line)
+- Sidebar tagline now reads “Project backups”
+- Success dialog width increases smoothly on completion
+- Secrets are removed from `settings.json` and the legacy `auth.json` after migration
+
+### Fixed
+
+- Native square browser dropdown replaced with an animated OLED-styled select
+- Textarea resize handle no longer shows a white corner
+- Backup success page no longer uses the old plain panel design
+- Long path and ignore-dialog overflow regressions remain fixed
+
+### Security
+
+- Windows DPAPI encryption for the Google client secret and tokens
+- No plaintext credentials in `settings.json` or `auth.json`
+- Legacy plaintext credentials are migrated and old files removed
+
 ## [0.2.0-beta.1] — 2026-11-15
 
 ### Added
@@ -84,3 +118,4 @@ Initial public beta.
 
 [0.1.0-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.1.0-beta.1
 [0.2.0-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.2.0-beta.1
+[0.3.0-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.3.0-beta.1

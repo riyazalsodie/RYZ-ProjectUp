@@ -61,6 +61,8 @@ export interface AppSnapshot {
   drive: DriveStatus;
   version: string;
   data_dir: string;
+  secure_storage: boolean;
+  secure_storage_label: string;
 }
 
 export interface SettingsInput {
@@ -115,6 +117,12 @@ export interface BackupJobState {
   progress: BackupProgress;
   record?: BackupRecord;
   error?: string;
+}
+
+export interface BulkBackupState {
+  current: number;
+  total: number;
+  projectName: string;
 }
 
 export interface RestoreJobState {

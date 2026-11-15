@@ -3,6 +3,7 @@ pub mod commands;
 pub mod drive;
 pub mod models;
 pub mod scanner;
+pub mod secrets;
 pub mod state;
 pub mod store;
 

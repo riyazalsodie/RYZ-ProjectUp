@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/riyazalsodie/RYZ-ProjectUp/releases"><img alt="Status: Beta" src="https://img.shields.io/badge/status-beta-00ff88?style=flat-square" /></a>
   <a href="https://github.com/riyazalsodie/RYZ-ProjectUp/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/riyazalsodie/RYZ-ProjectUp/actions/workflows/ci.yml/badge.svg" /></a>
-  <img alt="Version 0.2.0-beta.1" src="https://img.shields.io/badge/version-0.2.0--beta.1-00ff88?style=flat-square" />
+  <img alt="Version 0.3.0-beta.1" src="https://img.shields.io/badge/version-0.3.0--beta.1-00ff88?style=flat-square" />
   <img alt="Platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0b0f0d?style=flat-square" />
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white" />
   <img alt="Rust" src="https://img.shields.io/badge/Rust-1.88%2B-000000?style=flat-square&logo=rust" />
@@ -57,7 +57,9 @@ Select a folder  →  Read ignore rules  →  Build zip locally  →  Upload to 
 | **Snapshot retention** | Keep the last N backups per project — older Drive files are cleaned up automatically. |
 | **Restore anywhere** | Download any snapshot and extract it into a fresh folder. Zip-slip protected. |
 | **Backup history** | Search, open in Drive, restore or delete every snapshot from one place. |
+| **Bulk backups** | Back up every available project in one run, with a live “x / y” indicator and a stop control. |
 | **Drive vault index** | Projects, original folders and snapshot history are saved to a private `ryz-projectup-vault.json` in your Drive folder. Connect from a new PC and the whole vault comes back. |
+| **Encrypted credentials** | OAuth secrets and refresh tokens live in a `secrets.bin` blob encrypted with Windows DPAPI — never in plain settings files. |
 | **Relink on a new PC** | Restored projects whose folders moved show a **Folder missing** warning and a one-click **Relink folder** action — history is kept. |
 | **Extra ignore rules** | Add global patterns on top of each project's rules, or drop a `.ryzignore` file inside a project. |
 | **In-app setup guide** | A complete Google Cloud walkthrough with direct links, test-user steps and OAuth troubleshooting. |
@@ -68,6 +70,14 @@ Select a folder  →  Read ignore rules  →  Build zip locally  →  Upload to 
 | Backup history | Ignore Inspector |
 | --- | --- |
 | <img src="docs/screenshot-backups.png" alt="Backup history" /> | <img src="docs/screenshot-ignore.png" alt="Ignore Inspector" /> |
+
+### Snapshot completion
+
+<p align="center">
+  <img src="docs/screenshot-success.png" width="820" alt="Animated backup completion screen" />
+</p>
+
+A successful upload gets a dedicated completion view with an animated check, a confetti burst, quick file/size/date stats, and direct Drive access.
 
 ### Google Drive setup, inside the app
 
@@ -85,8 +95,8 @@ Grab the latest **beta** from the [Releases page](https://github.com/riyazalsodi
 
 | Build | File | Notes |
 | --- | --- | --- |
-| Windows installer | `RYZ.ProjectUp.0.2.0-beta.1.Setup.exe` | NSIS, per-user install, no admin required |
-| Windows portable | `RYZ.ProjectUp.0.2.0-beta.1.exe` | Run from any folder |
+| Windows installer | `RYZ.ProjectUp.0.3.0-beta.1.Setup.exe` | NSIS, per-user install, no admin required |
+| Windows portable | `RYZ.ProjectUp.0.3.0-beta.1.exe` | Run from any folder |
 
 **Requirements:** Windows 10/11 with the WebView2 runtime (preinstalled on modern Windows). macOS and Linux build from source; beta testing is currently Windows-first.
 
@@ -153,7 +163,9 @@ ProjectUp applies, in order:
 4. An optional **`.ryzignore`** file in the project root.
 5. Your global **Always ignore** patterns in Settings.
 
-Hidden files such as `.env` are included unless a rule excludes them. Add `.env`, `*.pem` or other secrets to **Settings → Always ignore** if you do not want them in a snapshot.
+Hidden files are included when they are not ignored, but the default **Always ignore** list now covers common build/dependency folders and secret files: `node_modules/`, `dist/`, `build/`, `target/`, `.next/`, caches, coverage, `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, OS junk and more. Remove any default entry in **Settings → Always ignore** if you intentionally want that file in a backup.
+
+> The default exclusions are a safety net, not a guarantee. Review the Ignore Inspector before backing up a project that contains credentials.
 
 > Standard Git behavior applies: a file cannot be re-included with `!pattern` if its parent directory is excluded. Ignore the directory's contents (`secret/*`) instead if you need negations.
 
@@ -191,13 +203,13 @@ It contains your project list, original folder paths, stats and all snapshot rec
 | Data | Location |
 | --- | --- |
 | Projects, backup history, settings | `%APPDATA%\com.ryz.projectup` (Windows) |
-| OAuth tokens | `auth.json` in the same local data folder |
+| OAuth tokens & client secret | `secrets.bin` in the same local data folder — encrypted with Windows DPAPI |
 | WebView2 cache | `%LOCALAPPDATA%\com.ryz.projectup` |
 | Snapshots | Your Google Drive → `RYZ ProjectUp` folder |
 | Cloud vault index | `ryz-projectup-vault.json` in the Drive backup folder — projects, paths and snapshot history (no secrets) |
 | Temporary zip | OS temp folder — deleted after upload or restore |
 
-The app data folder contains your Drive **refresh token**. Treat it as sensitive; the token is stored as plain local JSON, not encrypted. Use full-disk encryption and a locked user account on shared machines.
+The app data folder contains the encrypted `secrets.bin` blob. On Windows it is protected by Windows DPAPI and bound to your Windows user account. On macOS/Linux beta builds, OS secure storage is not wired up yet and the file is local; use full-disk encryption and a locked user account.
 
 ---
 
@@ -289,7 +301,7 @@ Backup and restore progress is streamed to the UI through `backup-progress` and 
 
 - **No RYZ servers.** Scanning, zipping and extracting happen locally. Uploads go from your PC directly to Google Drive.
 - **Narrow Drive scope.** ProjectUp requests only `drive.file`; it cannot browse unrelated files.
-- **Credentials stay local.** The OAuth Client ID, Client secret and refresh token live in the local app data folder.
+- **Credentials stay local and encrypted.** The OAuth Client secret, access tokens and refresh token are stored in `secrets.bin`, encrypted with Windows DPAPI and bound to the current Windows user. The webview only receives the connected account's display name, email and avatar.
 - **Snapshots are compressed, not encrypted.** If your project contains secrets, use Drive/OS-level encryption or exclude those files. Backup zips are only as private as the Google account that holds them.
 - **The vault index is not encrypted.** It contains project names, local paths and snapshot metadata, but no OAuth credentials or tokens.
 - **Path traversal protection.** Restore uses zip entry name validation and refuses paths outside the restore directory.
@@ -361,5 +373,5 @@ See [LICENSE](LICENSE).
 ---
 
 <p align="center">
-  <sub>Built with Rust, Tauri, React and an unhealthy appreciation for pitch black.</sub>
+  <sub>Built with Rust, Tauri and React.</sub>
 </p>

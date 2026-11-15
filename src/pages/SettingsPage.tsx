@@ -32,6 +32,13 @@ import { formatBytes, formatNumber, truncateMiddle } from "@/utils/format";
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { OAuthSetupGuide } from "@/components/OAuthSetupGuide";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface SettingsPageProps {
   snapshot: AppSnapshot;
@@ -410,8 +417,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     />
                     <p className="mt-1.5 flex items-start gap-1.5 text-[10px] leading-relaxed text-neutral-600">
                       <Lock className="mt-0.5 h-3 w-3 shrink-0" />
-                      Credentials and refresh tokens stay in this app&apos;s local data directory. They never
-                      touch a RYZ server.
+                      Credentials and refresh tokens stay in this app&apos;s local data directory
+                      {snapshot.secure_storage
+                        ? ` and are encrypted at rest with ${snapshot.secure_storage_label}.`
+                        : "."}{" "}
+                      They never touch a RYZ server.
                     </p>
                   </div>
                 </div>
@@ -462,32 +472,38 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
                 <Label htmlFor="retention">Snapshots kept per project</Label>
-                <select
-                  id="retention"
-                  value={retention}
-                  onChange={(e) => setRetention(Number(e.target.value))}
-                  className="native-select mt-1.5 h-10 w-full cursor-pointer rounded-xl border border-white/[0.09] bg-[#040806] px-3.5 text-xs text-neutral-200 focus:border-primary/50"
+                <Select
+                  value={String(retention)}
+                  onValueChange={(value) => setRetention(Number(value))}
                 >
-                  <option value={0}>Unlimited</option>
-                  <option value={3}>Last 3</option>
-                  <option value={5}>Last 5</option>
-                  <option value={10}>Last 10</option>
-                  <option value={20}>Last 20</option>
-                </select>
+                  <SelectTrigger id="retention" className="mt-1.5">
+                    <SelectValue placeholder="Choose retention" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">Unlimited</SelectItem>
+                    <SelectItem value="3">Last 3 snapshots</SelectItem>
+                    <SelectItem value="5">Last 5 snapshots</SelectItem>
+                    <SelectItem value="10">Last 10 snapshots</SelectItem>
+                    <SelectItem value="20">Last 20 snapshots</SelectItem>
+                  </SelectContent>
+                </Select>
                 <p className="mt-1.5 text-[10px] text-neutral-600">Older Drive files are deleted after upload.</p>
               </div>
               <div>
                 <Label htmlFor="compression">Zip compression</Label>
-                <select
-                  id="compression"
-                  value={compression}
-                  onChange={(e) => setCompression(Number(e.target.value))}
-                  className="native-select mt-1.5 h-10 w-full cursor-pointer rounded-xl border border-white/[0.09] bg-[#040806] px-3.5 text-xs text-neutral-200 focus:border-primary/50"
+                <Select
+                  value={String(compression)}
+                  onValueChange={(value) => setCompression(Number(value))}
                 >
-                  <option value={1}>Fast — larger archives</option>
-                  <option value={6}>Balanced — recommended</option>
-                  <option value={9}>Maximum — slower</option>
-                </select>
+                  <SelectTrigger id="compression" className="mt-1.5">
+                    <SelectValue placeholder="Choose compression" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">Fast — larger archives</SelectItem>
+                    <SelectItem value="6">Balanced — recommended</SelectItem>
+                    <SelectItem value="9">Maximum — slower</SelectItem>
+                  </SelectContent>
+                </Select>
                 <p className="mt-1.5 text-[10px] text-neutral-600">Applies to the next snapshot.</p>
               </div>
             </div>
@@ -498,12 +514,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 id="extra-patterns"
                 value={extraPatterns}
                 onChange={(e) => setExtraPatterns(e.target.value)}
-                placeholder={".env\n*.log\n.idea/\nThumbs.db"}
+                placeholder={".env\n*.pem\nnode_modules/\ndist/"}
                 spellCheck={false}
                 className="mt-1.5 min-h-[110px] font-mono text-[11px]"
               />
               <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-600">
-                One gitignore-style pattern per line, applied on top of the project&apos;s own rules. Drop a{" "}
+                One gitignore-style pattern per line, applied on top of the project&apos;s own rules. The
+                defaults cover common build folders, dependency caches and secret files. Drop a{" "}
                 <code className="font-mono text-neutral-400">.ryzignore</code> file in a project for
                 project-specific extras.
               </p>
@@ -558,6 +575,27 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               >
                 <Copy className="h-3.5 w-3.5" />
               </Button>
+            </div>
+
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-primary/15 bg-primary/[0.04] px-3.5 py-2.5">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <ShieldCheck className="h-4 w-4 shrink-0 text-primary/80" />
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold text-neutral-200">Google credentials</p>
+                  <p className="text-[10px] leading-relaxed text-neutral-500">
+                    {snapshot.secure_storage
+                      ? `Client secret and refresh tokens are encrypted at rest with ${snapshot.secure_storage_label}.`
+                      : "Stored in the local app data folder — OS secure storage is unavailable."}
+                  </p>
+                </div>
+              </div>
+              <Badge
+                variant={snapshot.secure_storage ? "success" : "warning"}
+                className="shrink-0 gap-1"
+              >
+                <ShieldCheck className="h-2.5 w-2.5" />
+                {snapshot.secure_storage ? "Encrypted" : "Local"}
+              </Badge>
             </div>
 
             <div className="mt-3 flex items-start gap-2 rounded-xl border border-primary/15 bg-primary/[0.04] p-3">

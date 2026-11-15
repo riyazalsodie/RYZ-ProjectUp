@@ -72,7 +72,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <h1 className="font-brand truncate text-[13px] text-white">RYZ PROJECTUP</h1>
             <p className="mt-0.5 flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-primary/70">
               <span className="h-1 w-1 rounded-full bg-primary" />
-              Drive backup vault
+              Project backups
             </p>
           </div>
         </div>

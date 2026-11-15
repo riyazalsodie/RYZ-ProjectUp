@@ -19,10 +19,11 @@ export const EmptyState: React.FC<EmptyStateProps> = ({ onAddProject, loading })
           </span>
         </div>
 
-        <h3 className="text-base font-semibold tracking-tight text-white">No projects in your vault yet</h3>
+        <h3 className="text-base font-semibold tracking-tight text-white">No projects yet</h3>
         <p className="mt-2 max-w-sm text-xs leading-relaxed text-neutral-500">
-          Pick a project folder. ProjectUp reads its <code className="rounded bg-white/[0.06] px-1 py-0.5 font-mono text-[10px] text-primary/80">.gitignore</code>{" "}
-          automatically, zips only the files that matter, and uploads the snapshot to your Google Drive.
+          Choose a folder. ProjectUp reads its{" "}
+          <code className="rounded bg-white/[0.06] px-1 py-0.5 font-mono text-[10px] text-primary/80">.gitignore</code>{" "}
+          automatically, builds a compressed snapshot, and uploads it to Google Drive.
         </p>
 
         <Button onClick={onAddProject} loading={loading} size="lg" className="mt-5 gap-2 px-5">
