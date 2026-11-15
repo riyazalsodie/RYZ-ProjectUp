@@ -4,7 +4,7 @@
 
 | Version | Supported |
 | --- | --- |
-| `0.3.x-beta` | ✅ |
+| `0.4.x-beta` | ✅ |
 | `0.2.x-beta` | ❌ (please update) |
 | `0.1.x-beta` | ❌ (please update) |
 

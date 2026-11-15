@@ -4,6 +4,35 @@ All notable changes to RYZ ProjectUp are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.0-beta.1] — 2026-11-15
+
+### Added
+
+- **Scheduled backups** with 6-hour, 12-hour, daily, 3-day and weekly intervals. Each project is checked against its own newest snapshot, so recent backups do not delay other projects.
+- A Rust background scheduler that runs while the window is hidden in the tray, with live **Automatic backup running** status and a **Stop backup** control.
+- **System tray** with Open ProjectUp, Back up all now and Quit ProjectUp actions.
+- **Launch at startup** toggle using the OS autostart integration; startup launches minimized to the tray.
+- **Minimize to tray** and **Close to tray** toggles, plus an explicit **Quit ProjectUp** action in Settings.
+- Global **Ctrl+Shift+B** backup hotkey that brings ProjectUp forward and runs **Back up all**.
+- Shared backend backup lane so manual, bulk and scheduled backups cannot race each other.
+- Automation settings card for schedules, tray behavior, startup and the hotkey.
+
+### Changed
+
+- Settings keeps unsaved edits when a background backup or cloud sync refreshes app state.
+- Tray/automation settings are saved together; startup launch applies immediately.
+- The release version and installers are now `0.4.0-beta.1`.
+
+### Fixed
+
+- Scheduled passes stop cleanly when **Stop backup** is pressed instead of continuing to the next due project.
+- Automatic backups and manual backups now report a clear conflict instead of overlapping.
+
+### Security
+
+- Scheduled backups reuse the existing DPAPI-protected OAuth session and the same ignore rules; no new secrets or telemetry are introduced.
+- Global hotkey and autostart integrations only call local Tauri APIs and do not transmit data.
+
 ## [0.3.0-beta.1] — 2026-11-15
 
 ### Added
@@ -119,3 +148,4 @@ Initial public beta.
 [0.1.0-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.1.0-beta.1
 [0.2.0-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.2.0-beta.1
 [0.3.0-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.3.0-beta.1
+[0.4.0-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.4.0-beta.1

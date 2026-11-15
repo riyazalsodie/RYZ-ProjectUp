@@ -1,17 +1,19 @@
+use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+use chrono::{DateTime, Local};
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
 use crate::archive;
 use crate::drive::{self, DriveClient};
 use crate::models::{
-    now_iso, AppSnapshot, BackupProgressEvent, BackupRecord, DriveStatus, ProjectView,
-    RestoreProgressEvent, RestoreResult, ScanPreview, SettingsInput,
+    now_iso, AppSnapshot, AutoBackupEvent, BackupProgressEvent, BackupRecord, DriveStatus, Project,
+    ProjectView, RestoreProgressEvent, RestoreResult, ScanPreview, SettingsInput,
 };
 use crate::scanner;
 use crate::state::AppState;
@@ -34,6 +36,20 @@ fn app_data_string(app: &AppHandle) -> String {
     app_data_path(app)
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default()
+}
+
+/// A project is due when it has never been backed up, or when its newest
+/// snapshot is older than the configured interval. Invalid timestamps are
+/// treated as due rather than silently disabling automation.
+fn is_backup_due(last_backup: Option<&str>, interval_hours: u32, now: DateTime<Local>) -> bool {
+    let Some(last_backup) = last_backup else {
+        return true;
+    };
+    let Ok(last_backup) = DateTime::parse_from_rfc3339(last_backup) else {
+        return true;
+    };
+    let elapsed = now.signed_duration_since(last_backup.with_timezone(&Local));
+    elapsed.num_seconds() >= interval_hours.clamp(1, 168) as i64 * 3600
 }
 
 fn human_bytes(bytes: u64) -> String {
@@ -88,8 +104,8 @@ fn sanitize_file_name(name: &str) -> String {
         trimmed.chars().take(90).collect::<String>()
     };
     const RESERVED: [&str; 22] = [
-        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
-        "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
     if RESERVED.contains(&candidate.to_uppercase().as_str()) {
         format!("_{candidate}")
@@ -105,8 +121,9 @@ fn open_drive(state: &AppState) -> Result<(DriveClient, String), String> {
         let inner = state.lock();
         (inner.settings.clone(), inner.tokens.clone())
     };
-    let mut tokens = tokens
-        .ok_or_else(|| "Google Drive is not connected. Connect it in Settings first.".to_string())?;
+    let mut tokens = tokens.ok_or_else(|| {
+        "Google Drive is not connected. Connect it in Settings first.".to_string()
+    })?;
     if tokens.refresh_token.is_empty() && tokens.access_token.is_empty() {
         return Err("Google Drive is not connected. Connect it in Settings first.".to_string());
     }
@@ -206,14 +223,11 @@ pub fn get_app_state(app: AppHandle, state: State<'_, AppState>) -> Result<AppSn
 }
 
 #[tauri::command]
-pub async fn add_project(
-    state: State<'_, AppState>,
-    path: String,
-) -> Result<ProjectView, String> {
+pub async fn add_project(state: State<'_, AppState>, path: String) -> Result<ProjectView, String> {
     let st = (*state).clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let canonical = dunce::canonicalize(&path)
-            .map_err(|e| format!("Could not open that folder: {e}"))?;
+        let canonical =
+            dunce::canonicalize(&path).map_err(|e| format!("Could not open that folder: {e}"))?;
         if !canonical.is_dir() {
             return Err("Please select a project folder, not a file.".to_string());
         }
@@ -295,8 +309,8 @@ pub async fn relink_project(
 ) -> Result<ProjectView, String> {
     let st = (*state).clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let canonical = dunce::canonicalize(&path)
-            .map_err(|e| format!("Could not open that folder: {e}"))?;
+        let canonical =
+            dunce::canonicalize(&path).map_err(|e| format!("Could not open that folder: {e}"))?;
         if !canonical.is_dir() {
             return Err("Please select a project folder, not a file.".to_string());
         }
@@ -437,6 +451,11 @@ pub fn save_settings(
             .map(|line| line.trim().to_string())
             .filter(|line| !line.is_empty())
             .collect();
+        inner.settings.auto_backup_enabled = input.auto_backup_enabled;
+        inner.settings.auto_backup_interval_hours = input.auto_backup_interval_hours.clamp(1, 168);
+        inner.settings.close_to_tray = input.close_to_tray;
+        inner.settings.minimize_to_tray = input.minimize_to_tray;
+        inner.settings.global_hotkey_enabled = input.global_hotkey_enabled;
 
         if credentials_changed {
             inner.tokens = None;
@@ -603,10 +622,7 @@ fn backup_blocking(
             .ok_or_else(|| "Project not found.".to_string())?;
         let root = PathBuf::from(&project.path);
         if !root.is_dir() {
-            return Err(format!(
-                "Project folder no longer exists: {}",
-                project.path
-            ));
+            return Err(format!("Project folder no longer exists: {}", project.path));
         }
 
         let (settings, tokens) = {
@@ -688,7 +704,8 @@ fn backup_blocking(
             return Err("Backup cancelled.".to_string());
         }
 
-        let folder_id = client.ensure_folder(&settings.folder_name, settings.folder_id.as_deref())?;
+        let folder_id =
+            client.ensure_folder(&settings.folder_name, settings.folder_id.as_deref())?;
         {
             let mut inner = state.lock();
             inner.settings.folder_id = Some(folder_id.clone());
@@ -773,7 +790,10 @@ fn backup_blocking(
             job_id,
             "uploading",
             58.0,
-            format!("Uploading {} snapshot to Google Drive…", human_bytes(zip_size)),
+            format!(
+                "Uploading {} snapshot to Google Drive…",
+                human_bytes(zip_size)
+            ),
             0,
             0,
             0,
@@ -881,6 +901,123 @@ fn backup_blocking(
     outcome
 }
 
+struct BackupLaneGuard<'a>(&'a AppState);
+
+impl Drop for BackupLaneGuard<'_> {
+    fn drop(&mut self) {
+        self.0.finish_backup();
+    }
+}
+
+/// Runs one scheduled pass. The pass is project-by-project: every project is
+/// checked against its own newest snapshot, so one project's schedule is never
+/// delayed by another project's recent backup.
+pub(crate) fn auto_backup_cycle(app: &AppHandle) {
+    let state = (*app.state::<AppState>()).clone();
+
+    let (enabled, interval_hours, drive_connected, projects) = {
+        let inner = state.lock();
+        let drive_connected = inner.tokens.as_ref().is_some_and(|tokens| {
+            !tokens.refresh_token.is_empty() || !tokens.access_token.is_empty()
+        });
+        (
+            inner.settings.auto_backup_enabled,
+            inner.settings.auto_backup_interval_hours.clamp(1, 168),
+            drive_connected,
+            inner.projects.clone(),
+        )
+    };
+
+    if !enabled || !drive_connected || projects.is_empty() {
+        return;
+    }
+
+    let latest_by_project = {
+        let inner = state.lock();
+        let mut latest: HashMap<String, String> = HashMap::new();
+        for backup in &inner.backups {
+            let replace = latest
+                .get(&backup.project_id)
+                .map(|current| backup.created_at > *current)
+                .unwrap_or(true);
+            if replace {
+                latest.insert(backup.project_id.clone(), backup.created_at.clone());
+            }
+        }
+        latest
+    };
+
+    let now = Local::now();
+    let due: Vec<Project> = projects
+        .into_iter()
+        .filter(|project| Path::new(&project.path).is_dir())
+        .filter(|project| {
+            is_backup_due(
+                latest_by_project.get(&project.id).map(String::as_str),
+                interval_hours,
+                now,
+            )
+        })
+        .collect();
+
+    if due.is_empty() || !state.begin_backup() {
+        return;
+    }
+    let _lane = BackupLaneGuard(&state);
+    let cancel = state.lock().backup_cancel.clone();
+    cancel.store(false, Ordering::SeqCst);
+
+    for project in due {
+        if !state.lock().settings.auto_backup_enabled || cancel.load(Ordering::SeqCst) {
+            break;
+        }
+        let job_id = format!("auto-{}", Uuid::new_v4());
+
+        let _ = app.emit(
+            "auto-backup",
+            AutoBackupEvent {
+                project_name: project.name.clone(),
+                status: "started".to_string(),
+                message: "Scheduled backup started".to_string(),
+                record: None,
+            },
+        );
+
+        match backup_blocking(app, &state, &project.id, &job_id) {
+            Ok(record) => {
+                let _ = app.emit(
+                    "auto-backup",
+                    AutoBackupEvent {
+                        project_name: project.name.clone(),
+                        status: "success".to_string(),
+                        message: format!("Uploaded {}", record.file_name),
+                        record: Some(record),
+                    },
+                );
+            }
+            Err(err) => {
+                let cancelled = err.to_lowercase().contains("cancel");
+                let _ = app.emit(
+                    "auto-backup",
+                    AutoBackupEvent {
+                        project_name: project.name.clone(),
+                        status: if cancelled { "cancelled" } else { "error" }.to_string(),
+                        message: if cancelled {
+                            "Scheduled backup cancelled".to_string()
+                        } else {
+                            err
+                        },
+                        record: None,
+                    },
+                );
+                if cancelled {
+                    break;
+                }
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn run_backup(
     app: AppHandle,
@@ -889,14 +1026,25 @@ pub async fn run_backup(
     job_id: String,
 ) -> Result<BackupRecord, String> {
     let st = (*state).clone();
+    if !st.begin_backup() {
+        return Err(
+            "A backup is already running. Wait for it to finish before starting another."
+                .to_string(),
+        );
+    }
     let cancel = st.lock().backup_cancel.clone();
     cancel.store(false, Ordering::SeqCst);
     let handle = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let lane = st.clone();
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
         backup_blocking(&handle, &st, &project_id, &job_id)
     })
-    .await
-    .map_err(|e| format!("Backup task failed: {e}"))?
+    .await;
+    lane.finish_backup();
+    match outcome {
+        Ok(result) => result,
+        Err(err) => Err(format!("Backup task failed: {err}")),
+    }
 }
 
 #[tauri::command]
@@ -971,15 +1119,18 @@ fn restore_blocking(
             }
         };
 
-        let downloaded =
-            match client.download_archive(&record.file_id, &temp_zip, &cancel, &mut download_progress)
-            {
-                Ok(bytes) => bytes,
-                Err(err) => {
-                    let _ = fs::remove_file(&temp_zip);
-                    return Err(err);
-                }
-            };
+        let downloaded = match client.download_archive(
+            &record.file_id,
+            &temp_zip,
+            &cancel,
+            &mut download_progress,
+        ) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                let _ = fs::remove_file(&temp_zip);
+                return Err(err);
+            }
+        };
         if downloaded == 0 {
             let _ = fs::remove_file(&temp_zip);
             return Err("Google Drive returned an empty snapshot.".to_string());
@@ -1031,38 +1182,24 @@ fn restore_blocking(
                     job_id,
                     "extracting",
                     percent,
-                    format!(
-                        "Extracting files · {} / {}",
-                        done,
-                        record.file_count.max(1)
-                    ),
+                    format!("Extracting files · {} / {}", done, record.file_count.max(1)),
                 );
                 last_extract_emit = Instant::now();
             }
         };
 
-        let extracted_files = match archive::extract_archive(
-            &temp_zip,
-            &target,
-            &cancel,
-            &mut extract_progress,
-        ) {
-            Ok(count) => count,
-            Err(err) => {
-                let _ = fs::remove_file(&temp_zip);
-                return Err(err);
-            }
-        };
+        let extracted_files =
+            match archive::extract_archive(&temp_zip, &target, &cancel, &mut extract_progress) {
+                Ok(count) => count,
+                Err(err) => {
+                    let _ = fs::remove_file(&temp_zip);
+                    return Err(err);
+                }
+            };
 
         let _ = fs::remove_file(&temp_zip);
 
-        emit_restore(
-            app,
-            job_id,
-            "done",
-            100.0,
-            "Restore complete".to_string(),
-        );
+        emit_restore(app, job_id, "done", 100.0, "Restore complete".to_string());
 
         Ok(RestoreResult {
             destination: target.to_string_lossy().to_string(),
@@ -1114,8 +1251,11 @@ pub async fn delete_backup(
             let mut tokens = tokens.ok_or_else(|| {
                 "Google Drive is not connected. Reconnect it to delete the cloud file.".to_string()
             })?;
-            let access =
-                drive::ensure_access_token(&mut tokens, &settings.client_id, &settings.client_secret)?;
+            let access = drive::ensure_access_token(
+                &mut tokens,
+                &settings.client_id,
+                &settings.client_secret,
+            )?;
             {
                 let mut inner = st.lock();
                 inner.tokens = Some(tokens.clone());
@@ -1204,4 +1344,37 @@ pub fn reveal_path(path: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+
+    #[test]
+    fn due_backups_use_each_projects_own_snapshot_age() {
+        let now = Local::now();
+        assert!(is_backup_due(None, 24, now));
+
+        let recent = (now - Duration::hours(1)).to_rfc3339();
+        assert!(!is_backup_due(Some(&recent), 24, now));
+
+        let old = (now - Duration::hours(25)).to_rfc3339();
+        assert!(is_backup_due(Some(&old), 24, now));
+
+        assert!(is_backup_due(Some("not-a-timestamp"), 24, now));
+    }
+
+    #[test]
+    fn backup_interval_is_clamped() {
+        let now = Local::now();
+        let two_hours_ago = (now - Duration::hours(2)).to_rfc3339();
+        // An interval below one hour is raised to one hour.
+        assert!(is_backup_due(Some(&two_hours_ago), 0, now));
+    }
 }

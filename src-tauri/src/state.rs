@@ -1,10 +1,10 @@
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::models::{
-    CloudVault, DriveStatus, DriveTokens, Project, ProjectStats, ProjectView, PublicSettings,
-    Settings, now_iso, AppSnapshot, BackupRecord,
+    now_iso, AppSnapshot, BackupRecord, CloudVault, DriveStatus, DriveTokens, Project,
+    ProjectStats, ProjectView, PublicSettings, Settings,
 };
 use crate::secrets::{self, Secrets};
 use crate::store::Store;
@@ -16,6 +16,7 @@ pub struct Inner {
     pub tokens: Option<DriveTokens>,
     pub backup_cancel: Arc<AtomicBool>,
     pub auth_cancel: Arc<AtomicBool>,
+    pub backup_running: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -36,9 +37,12 @@ impl AppState {
         // Replace that exact set with the expanded security/build defaults.
         const LEGACY_DEFAULTS: [&str; 3] = [".DS_Store", "Thumbs.db", "desktop.ini"];
         if settings.extra_ignore_patterns.len() == LEGACY_DEFAULTS.len()
-            && LEGACY_DEFAULTS
-                .iter()
-                .all(|legacy| settings.extra_ignore_patterns.iter().any(|value| value == legacy))
+            && LEGACY_DEFAULTS.iter().all(|legacy| {
+                settings
+                    .extra_ignore_patterns
+                    .iter()
+                    .any(|value| value == legacy)
+            })
         {
             settings.extra_ignore_patterns = Settings::default().extra_ignore_patterns;
         }
@@ -59,6 +63,7 @@ impl AppState {
                 tokens,
                 backup_cancel: Arc::new(AtomicBool::new(false)),
                 auth_cancel: Arc::new(AtomicBool::new(false)),
+                backup_running: Arc::new(AtomicBool::new(false)),
             })),
         };
 
@@ -71,7 +76,22 @@ impl AppState {
     }
 
     pub fn lock(&self) -> MutexGuard<'_, Inner> {
-        self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Reserve the single backup lane. Manual and scheduled backups share this
+    /// flag so they never race on archives, retention, or Drive metadata.
+    pub fn begin_backup(&self) -> bool {
+        self.lock()
+            .backup_running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+
+    pub fn finish_backup(&self) {
+        self.lock().backup_running.store(false, Ordering::SeqCst);
     }
 
     pub fn save_projects(&self) -> Result<(), String> {
@@ -223,7 +243,11 @@ impl AppState {
         }
     }
 
-    pub fn update_project_stats(&self, project_id: &str, stats: ProjectStats) -> Result<(), String> {
+    pub fn update_project_stats(
+        &self,
+        project_id: &str,
+        stats: ProjectStats,
+    ) -> Result<(), String> {
         {
             let mut inner = self.lock();
             if let Some(project) = inner.projects.iter_mut().find(|p| p.id == project_id) {
@@ -244,24 +268,34 @@ impl AppState {
     }
 
     pub fn find_project(&self, project_id: &str) -> Option<Project> {
-        self.lock().projects.iter().find(|p| p.id == project_id).cloned()
+        self.lock()
+            .projects
+            .iter()
+            .find(|p| p.id == project_id)
+            .cloned()
     }
 
     pub fn find_backup(&self, backup_id: &str) -> Option<BackupRecord> {
-        self.lock().backups.iter().find(|b| b.id == backup_id).cloned()
+        self.lock()
+            .backups
+            .iter()
+            .find(|b| b.id == backup_id)
+            .cloned()
     }
 
     pub fn drive_status(&self) -> DriveStatus {
         let inner = self.lock();
         match inner.tokens.as_ref() {
-            Some(tokens) if !tokens.refresh_token.is_empty() || !tokens.access_token.is_empty() => DriveStatus {
-                connected: true,
-                email: tokens.email.clone(),
-                name: tokens.name.clone(),
-                picture: tokens.picture.clone(),
-                folder_id: inner.settings.folder_id.clone(),
-                folder_name: inner.settings.folder_name.clone(),
-            },
+            Some(tokens) if !tokens.refresh_token.is_empty() || !tokens.access_token.is_empty() => {
+                DriveStatus {
+                    connected: true,
+                    email: tokens.email.clone(),
+                    name: tokens.name.clone(),
+                    picture: tokens.picture.clone(),
+                    folder_id: inner.settings.folder_id.clone(),
+                    folder_name: inner.settings.folder_name.clone(),
+                }
+            }
             _ => DriveStatus {
                 connected: false,
                 email: None,
@@ -316,7 +350,8 @@ mod tests {
 
     #[test]
     fn merges_cloud_vault_without_duplicates() {
-        let dir = std::env::temp_dir().join(format!("ryz-projectup-state-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("ryz-projectup-state-{}", uuid::Uuid::new_v4()));
         let state = AppState::new(dir.clone()).unwrap();
 
         let remote = CloudVault {
@@ -347,7 +382,8 @@ mod tests {
 
     #[test]
     fn rejects_newer_cloud_vault_schema() {
-        let dir = std::env::temp_dir().join(format!("ryz-projectup-state-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("ryz-projectup-state-{}", uuid::Uuid::new_v4()));
         let state = AppState::new(dir.clone()).unwrap();
         let remote = CloudVault {
             schema: 2,

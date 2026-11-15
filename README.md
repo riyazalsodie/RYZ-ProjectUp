@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/riyazalsodie/RYZ-ProjectUp/releases"><img alt="Status: Beta" src="https://img.shields.io/badge/status-beta-00ff88?style=flat-square" /></a>
   <a href="https://github.com/riyazalsodie/RYZ-ProjectUp/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/riyazalsodie/RYZ-ProjectUp/actions/workflows/ci.yml/badge.svg" /></a>
-  <img alt="Version 0.3.0-beta.1" src="https://img.shields.io/badge/version-0.3.0--beta.1-00ff88?style=flat-square" />
+  <img alt="Version 0.4.0-beta.1" src="https://img.shields.io/badge/version-0.4.0--beta.1-00ff88?style=flat-square" />
   <img alt="Platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0b0f0d?style=flat-square" />
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white" />
   <img alt="Rust" src="https://img.shields.io/badge/Rust-1.88%2B-000000?style=flat-square&logo=rust" />
@@ -58,6 +58,10 @@ Select a folder  →  Read ignore rules  →  Build zip locally  →  Upload to 
 | **Restore anywhere** | Download any snapshot and extract it into a fresh folder. Zip-slip protected. |
 | **Backup history** | Search, open in Drive, restore or delete every snapshot from one place. |
 | **Bulk backups** | Back up every available project in one run, with a live “x / y” indicator and a stop control. |
+| **Scheduled backups** | Set one interval from 6 hours to a week. Each project is checked against its own newest snapshot, so a recent backup in one project never blocks another. |
+| **System tray mode** | Minimize or close to the tray, reopen from the tray icon, or start **Back up all** from its menu. ProjectUp can keep running while the window is hidden. |
+| **Launch at startup** | Start quietly in the tray at login so due snapshots can run without opening the dashboard. |
+| **Global backup hotkey** | Press `Ctrl+Shift+B` from any app to bring ProjectUp forward and run **Back up all**. It can be disabled in Settings. |
 | **Drive vault index** | Projects, original folders and snapshot history are saved to a private `ryz-projectup-vault.json` in your Drive folder. Connect from a new PC and the whole vault comes back. |
 | **Encrypted credentials** | OAuth secrets and refresh tokens live in a `secrets.bin` blob encrypted with Windows DPAPI — never in plain settings files. |
 | **Relink on a new PC** | Restored projects whose folders moved show a **Folder missing** warning and a one-click **Relink folder** action — history is kept. |
@@ -87,6 +91,18 @@ A successful upload gets a dedicated completion view with an animated check, a c
 
 The built-in guide covers creating the Google Cloud project, enabling the Drive API, the consent screen, test users, the `drive.file` scope, creating a **Desktop app** OAuth client, and fixing common OAuth errors.
 
+### Automation and background mode
+
+Open **Settings → Automation & background** to configure:
+
+- **Scheduled backups** — pick a 6-hour, 12-hour, daily, 3-day or weekly interval. Each project is evaluated independently against its own latest snapshot. The schedule only runs while ProjectUp is open; the background pass checks every five minutes.
+- **Launch at startup** — starts the app minimized to the tray at login. This is saved immediately through the operating system, not in the vault.
+- **Minimize to tray / Close to tray** — keep the process alive when you use the window controls. The close setting applies after you press **Save automation**.
+- **Global backup hotkey** — `Ctrl+Shift+B` runs **Back up all** system-wide and brings the window forward. It is enabled by default and can be switched off if the combination is already in use.
+- **Quit ProjectUp** — exits fully. If you use close-to-tray, this is the explicit way to stop the process and pause the schedule.
+
+The tray menu also has **Open ProjectUp**, **Back up all now** and **Quit ProjectUp**.
+
 ---
 
 ## Download
@@ -95,8 +111,8 @@ Grab the latest **beta** from the [Releases page](https://github.com/riyazalsodi
 
 | Build | File | Notes |
 | --- | --- | --- |
-| Windows installer | `RYZ.ProjectUp.0.3.0-beta.1.Setup.exe` | NSIS, per-user install, no admin required |
-| Windows portable | `RYZ.ProjectUp.0.3.0-beta.1.exe` | Run from any folder |
+| Windows installer | `RYZ.ProjectUp.0.4.0-beta.1.Setup.exe` | NSIS, per-user install, no admin required |
+| Windows portable | `RYZ.ProjectUp.0.4.0-beta.1.exe` | Run from any folder |
 
 **Requirements:** Windows 10/11 with the WebView2 runtime (preinstalled on modern Windows). macOS and Linux build from source; beta testing is currently Windows-first.
 
@@ -112,6 +128,7 @@ Grab the latest **beta** from the [Releases page](https://github.com/riyazalsodi
 4. Click **Connect Google Drive** and follow the in-app guide (one-time OAuth setup).
 5. Click **Back up** on any project.
 6. Open **Backup History** to restore a snapshot or jump to the file in Google Drive.
+7. Optional: open **Settings → Automation & background** and enable scheduled backups, startup launch or tray mode.
 
 ProjectUp creates its Drive folder (`RYZ ProjectUp` by default) on the first backup.
 
@@ -220,6 +237,7 @@ The app data folder contains the encrypted `secrets.bin` blob. On Windows it is 
 - **React 18 + TypeScript** — typed UI, Tauri event listeners
 - **Tailwind CSS 3 + shadcn/ui patterns** — OLED design system, Radix primitives
 - **Framer Motion + Sonner** — page motion and toasts
+- **Tauri plugins** — autostart, global shortcuts, system tray and native dialogs
 
 ### Project structure
 
@@ -232,13 +250,14 @@ src/
   lib/                  class utilities
 src-tauri/src/
   commands.rs           Tauri commands + backup/restore orchestration
+  autostart.rs          per-user startup registration
   scanner.rs            .gitignore-aware filesystem walker
   archive.rs            streaming zip creation + safe extraction
   drive.rs              Google OAuth (PKCE), Drive API, upload/download
   state.rs              in-memory state + snapshot views
   store.rs              atomic JSON persistence
   models.rs             serialized DTOs
-  lib.rs                app setup and invoke handler
+  lib.rs                app setup, tray, scheduler and invoke handler
 docs/                   README screenshots and logo
 assets/                 app icon source
 ```
@@ -292,8 +311,10 @@ bunx tauri icon assets/icon.svg -o src-tauri/icons
 | `restore_backup` | Download + extract a snapshot |
 | `delete_backup` | Remove local record and optionally the Drive file |
 | `open_url` / `reveal_path` | Open links and reveal folders |
+| `get_autostart` / `set_autostart` | Read or update the per-user startup registration |
+| `quit_app` | Exit the app from Settings |
 
-Backup and restore progress is streamed to the UI through `backup-progress` and `restore-progress` events.
+Backup, restore and scheduled-backup progress is streamed to the UI through `backup-progress`, `restore-progress` and `auto-backup` events. The scheduled pass shares one backend backup lane with manual runs, so archives and Drive metadata never overlap.
 
 ---
 
@@ -322,12 +343,16 @@ This is the first public beta. What works today:
 - Backup history, restore and delete
 - Drive vault index: restore projects + history on a new PC
 - Relink missing project folders after moving PCs
+- Scheduled backups with independent per-project due checks
+- System tray mode, launch at startup and minimize/close-to-tray controls
+- Global `Ctrl+Shift+B` backup hotkey
 - In-app Google OAuth setup guide
 - OLED desktop UI and native window controls
 
 Known limitations / not yet included:
 
-- No scheduled or background automatic backups
+- Scheduled backups only run while ProjectUp is running; there is no Windows service or Task Scheduler entry yet
+- One interval applies to every project; per-project intervals and per-project pause controls are not included
 - No incremental/delta snapshots — each backup is a full zip
 - No client-side encryption of snapshots
 - Cloud sync is additive; deletions on one PC do not propagate to other PCs' local vaults
@@ -339,7 +364,9 @@ Known limitations / not yet included:
 
 ### Roadmap
 
-- [ ] Scheduled backups with a background tray mode
+- [x] Scheduled backups with a background tray mode
+- [ ] Per-project schedule intervals and pause/resume controls
+- [ ] Scheduled backups without keeping the app open (OS task/service)
 - [ ] Incremental snapshots and deduplication
 - [ ] Optional client-side encryption
 - [ ] Multiple Drive destinations / per-project folders

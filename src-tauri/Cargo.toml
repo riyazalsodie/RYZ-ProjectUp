@@ -1,6 +1,6 @@
 [package]
 name = "ryz-projectup"
-version = "0.3.0-beta.1"
+version = "0.4.0-beta.1"
 description = "Git-aware project backups to Google Drive — a modern Tauri desktop vault."
 authors = ["R ! Y 4 Z"]
 license = "MIT"
@@ -18,8 +18,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.0.0", features = [] }
 
 [dependencies]
-tauri = { version = "2.0.0", features = [] }
+tauri = { version = "2.0.0", features = ["tray-icon"] }
 tauri-plugin-dialog = "2.0.0"
+tauri-plugin-autostart = "2.0.0"
+tauri-plugin-global-shortcut = "2.0.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
@@ -36,6 +38,7 @@ url = "2"
 open = "5.3"
 
 [target.'cfg(windows)'.dependencies]
+windows-registry = "0.6"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",

@@ -34,6 +34,8 @@ interface ProjectsPageProps {
   onBackupAll: () => void;
   onCancelBulkBackup: () => void;
   bulkBackup: BulkBackupState | null;
+  autoBackupProject: string | null;
+  onCancelAutoBackup: () => void;
   onPreview: (project: Project) => void;
   onReveal: (path: string) => void;
   onRelink: (project: Project) => void;
@@ -54,6 +56,8 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
   onBackupAll,
   onCancelBulkBackup,
   bulkBackup,
+  autoBackupProject,
+  onCancelAutoBackup,
   onPreview,
   onReveal,
   onRelink,
@@ -138,7 +142,13 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
                   Stop bulk ({bulkBackup.current + 1}/{bulkBackup.total})
                 </Button>
               ) : (
-                <Button variant="secondary" size="sm" onClick={onBackupAll} className="gap-1.5">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={onBackupAll}
+                  className="gap-1.5"
+                  title="Back up every available project (Ctrl+Shift+B)"
+                >
                   <ArrowUpFromLine className="h-3.5 w-3.5" />
                   Back up all
                 </Button>
@@ -197,6 +207,28 @@ export const ProjectsPage: React.FC<ProjectsPageProps> = ({
               className="border-amber-500/25 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20"
             >
               Connect Google Drive
+            </Button>
+          </div>
+        ) : null}
+
+        {autoBackupProject ? (
+          <div className="mt-4 flex flex-col items-start justify-between gap-3 rounded-2xl border border-primary/20 bg-primary/[0.055] px-4 py-3 sm:flex-row sm:items-center">
+            <div className="flex items-start gap-2.5">
+              <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-primary" />
+              <div>
+                <p className="text-xs font-semibold text-primary">Automatic backup running</p>
+                <p className="mt-0.5 text-[10px] leading-relaxed text-primary/60">
+                  {autoBackupProject} is being archived and uploaded in the background.
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={onCancelAutoBackup}
+              className="border-primary/25 bg-primary/10 text-primary hover:bg-primary/15"
+            >
+              Stop backup
             </Button>
           </div>
         ) : null}

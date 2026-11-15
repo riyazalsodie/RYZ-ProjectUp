@@ -81,6 +81,16 @@ pub struct Settings {
     pub respect_gitignore: bool,
     #[serde(default = "default_extra_patterns")]
     pub extra_ignore_patterns: Vec<String>,
+    #[serde(default)]
+    pub auto_backup_enabled: bool,
+    #[serde(default = "default_auto_backup_interval")]
+    pub auto_backup_interval_hours: u32,
+    #[serde(default)]
+    pub close_to_tray: bool,
+    #[serde(default)]
+    pub minimize_to_tray: bool,
+    #[serde(default = "default_true")]
+    pub global_hotkey_enabled: bool,
 }
 
 fn default_folder_name() -> String {
@@ -97,6 +107,10 @@ fn default_compression() -> i64 {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_auto_backup_interval() -> u32 {
+    24
 }
 
 fn default_extra_patterns() -> Vec<String> {
@@ -155,6 +169,11 @@ impl Default for Settings {
             compression_level: default_compression(),
             respect_gitignore: true,
             extra_ignore_patterns: default_extra_patterns(),
+            auto_backup_enabled: false,
+            auto_backup_interval_hours: default_auto_backup_interval(),
+            close_to_tray: false,
+            minimize_to_tray: false,
+            global_hotkey_enabled: true,
         }
     }
 }
@@ -166,6 +185,16 @@ pub struct SettingsInput {
     pub compression_level: i64,
     pub respect_gitignore: bool,
     pub extra_ignore_patterns: Vec<String>,
+    #[serde(default)]
+    pub auto_backup_enabled: bool,
+    #[serde(default = "default_auto_backup_interval")]
+    pub auto_backup_interval_hours: u32,
+    #[serde(default)]
+    pub close_to_tray: bool,
+    #[serde(default)]
+    pub minimize_to_tray: bool,
+    #[serde(default = "default_true")]
+    pub global_hotkey_enabled: bool,
     #[serde(default)]
     pub client_id: Option<String>,
     #[serde(default)]
@@ -181,6 +210,11 @@ pub struct PublicSettings {
     pub compression_level: i64,
     pub respect_gitignore: bool,
     pub extra_ignore_patterns: Vec<String>,
+    pub auto_backup_enabled: bool,
+    pub auto_backup_interval_hours: u32,
+    pub close_to_tray: bool,
+    pub minimize_to_tray: bool,
+    pub global_hotkey_enabled: bool,
 }
 
 impl From<&Settings> for PublicSettings {
@@ -193,6 +227,11 @@ impl From<&Settings> for PublicSettings {
             compression_level: value.compression_level,
             respect_gitignore: value.respect_gitignore,
             extra_ignore_patterns: value.extra_ignore_patterns.clone(),
+            auto_backup_enabled: value.auto_backup_enabled,
+            auto_backup_interval_hours: value.auto_backup_interval_hours,
+            close_to_tray: value.close_to_tray,
+            minimize_to_tray: value.minimize_to_tray,
+            global_hotkey_enabled: value.global_hotkey_enabled,
         }
     }
 }
@@ -270,6 +309,14 @@ pub struct RestoreResult {
 }
 
 #[derive(Serialize, Clone, Debug)]
+pub struct AutoBackupEvent {
+    pub project_name: String,
+    pub status: String,
+    pub message: String,
+    pub record: Option<BackupRecord>,
+}
+
+#[derive(Serialize, Clone, Debug)]
 pub struct UploadedFile {
     pub id: String,
     pub name: String,
@@ -295,4 +342,19 @@ pub struct CloudVault {
 
 fn default_cloud_schema() -> u32 {
     1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upgrading_old_settings_keeps_safe_automation_defaults() {
+        let settings: Settings = serde_json::from_str("{}").expect("settings should deserialize");
+        assert!(!settings.auto_backup_enabled);
+        assert_eq!(settings.auto_backup_interval_hours, 24);
+        assert!(!settings.close_to_tray);
+        assert!(!settings.minimize_to_tray);
+        assert!(settings.global_hotkey_enabled);
+    }
 }

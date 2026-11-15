@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   BookOpen,
   CheckCircle2,
   ChevronDown,
+  Clock3,
   Cloud,
   Copy,
   Database,
@@ -10,9 +12,13 @@ import {
   FolderCog,
   FolderOpen,
   KeyRound,
+  Keyboard,
   Link2Off,
   Lock,
+  Minimize2,
+  Power,
   RefreshCw,
+  Rocket,
   Save,
   ShieldCheck,
   Sparkles,
@@ -21,6 +27,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppSnapshot, SettingsInput } from "@/types";
+import { isTauriRuntime } from "@/hooks/useWindowControls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +55,7 @@ interface SettingsPageProps {
   onSyncCloud: () => Promise<void>;
   onOpenUrl: (url: string) => void;
   onReveal: (path: string) => void;
+  onQuit: () => Promise<void>;
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({
@@ -58,6 +66,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onSyncCloud,
   onOpenUrl,
   onReveal,
+  onQuit,
 }) => {
   const { settings, drive, data_dir } = snapshot;
 
@@ -66,17 +75,30 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [compression, setCompression] = useState(settings.compression_level);
   const [respectGitignore, setRespectGitignore] = useState(settings.respect_gitignore);
   const [extraPatterns, setExtraPatterns] = useState(settings.extra_ignore_patterns.join("\n"));
+  const [autoBackupEnabled, setAutoBackupEnabled] = useState(settings.auto_backup_enabled);
+  const [autoBackupInterval, setAutoBackupInterval] = useState(
+    settings.auto_backup_interval_hours
+  );
+  const [minimizeToTray, setMinimizeToTray] = useState(settings.minimize_to_tray);
+  const [closeToTray, setCloseToTray] = useState(settings.close_to_tray);
+  const [hotkeyEnabled, setHotkeyEnabled] = useState(settings.global_hotkey_enabled);
 
   const [clientId, setClientId] = useState(settings.client_id);
   const [clientSecret, setClientSecret] = useState("");
   const [showOauth, setShowOauth] = useState(!settings.has_client_secret || !settings.client_id);
 
   const [savingRules, setSavingRules] = useState(false);
+  const [savingAutomation, setSavingAutomation] = useState(false);
   const [savingOauth, setSavingOauth] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [syncingCloud, setSyncingCloud] = useState(false);
+  const [autostartEnabled, setAutostartEnabled] = useState(false);
+  const [autostartBusy, setAutostartBusy] = useState(false);
+  const [confirmQuit, setConfirmQuit] = useState(false);
+  const [quitting, setQuitting] = useState(false);
+  const settingsKey = JSON.stringify(settings);
 
   useEffect(() => {
     setFolderName(settings.folder_name);
@@ -84,30 +106,109 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setCompression(settings.compression_level);
     setRespectGitignore(settings.respect_gitignore);
     setExtraPatterns(settings.extra_ignore_patterns.join("\n"));
+    setAutoBackupEnabled(settings.auto_backup_enabled);
+    setAutoBackupInterval(settings.auto_backup_interval_hours);
+    setMinimizeToTray(settings.minimize_to_tray);
+    setCloseToTray(settings.close_to_tray);
+    setHotkeyEnabled(settings.global_hotkey_enabled);
     setClientId(settings.client_id);
-  }, [settings]);
+    // Do not discard unsaved edits when a background backup refreshes the
+    // snapshot but the persisted settings are unchanged.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsKey]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let active = true;
+    invoke<boolean>("get_autostart")
+      .then((value) => {
+        if (active) setAutostartEnabled(value);
+      })
+      .catch((err) => console.error("Could not read startup setting", err));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const buildInput = (overrides: Partial<SettingsInput> = {}): SettingsInput => ({
+    folder_name: folderName.trim() || "RYZ ProjectUp",
+    retention,
+    compression_level: compression,
+    respect_gitignore: respectGitignore,
+    extra_ignore_patterns: extraPatterns
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean),
+    auto_backup_enabled: autoBackupEnabled,
+    auto_backup_interval_hours: autoBackupInterval,
+    close_to_tray: closeToTray,
+    minimize_to_tray: minimizeToTray,
+    global_hotkey_enabled: hotkeyEnabled,
+    client_id: null,
+    client_secret: null,
+    ...overrides,
+  });
 
   const saveRules = async () => {
     setSavingRules(true);
     try {
-      const patterns = extraPatterns
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
-      await onSave({
-        folder_name: folderName.trim() || "RYZ ProjectUp",
-        retention,
-        compression_level: compression,
-        respect_gitignore: respectGitignore,
-        extra_ignore_patterns: patterns,
-        client_id: null,
-        client_secret: null,
-      });
+      await onSave(buildInput());
       toast.success("Backup rules saved");
     } catch (err) {
       toast.error("Could not save settings", { description: String(err) });
     } finally {
       setSavingRules(false);
+    }
+  };
+
+  const saveAutomation = async () => {
+    setSavingAutomation(true);
+    try {
+      await onSave(buildInput());
+      toast.success("Automation settings saved", {
+        description: autoBackupEnabled
+          ? "Scheduled backups will run while ProjectUp is open."
+          : undefined,
+      });
+    } catch (err) {
+      toast.error("Could not save automation settings", { description: String(err) });
+    } finally {
+      setSavingAutomation(false);
+    }
+  };
+
+  const handleAutostart = async (value: boolean) => {
+    if (!isTauriRuntime()) {
+      toast.error("Startup launch is only available in the desktop app");
+      return;
+    }
+    setAutostartBusy(true);
+    try {
+      const next = await invoke<boolean>("set_autostart", { enabled: value });
+      setAutostartEnabled(next);
+      toast.success(next ? "ProjectUp will launch at startup" : "Startup launch disabled", {
+        description: next
+          ? "It opens quietly in the tray so scheduled backups can keep running."
+          : undefined,
+        id: "autostart",
+      });
+    } catch (err) {
+      toast.error("Could not update startup setting", {
+        description: String(err),
+        id: "autostart",
+      });
+    } finally {
+      setAutostartBusy(false);
+    }
+  };
+
+  const handleQuit = async () => {
+    setQuitting(true);
+    try {
+      await onQuit();
+    } catch (err) {
+      setQuitting(false);
+      toast.error("Could not quit ProjectUp", { description: String(err) });
     }
   };
 
@@ -122,19 +223,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     }
     setSavingOauth(true);
     try {
-      const patterns = extraPatterns
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
-      await onSave({
-        folder_name: folderName.trim() || "RYZ ProjectUp",
-        retention,
-        compression_level: compression,
-        respect_gitignore: respectGitignore,
-        extra_ignore_patterns: patterns,
-        client_id: clientId.trim(),
-        client_secret: clientSecret.trim() ? clientSecret.trim() : null,
-      });
+      await onSave(
+        buildInput({
+          client_id: clientId.trim(),
+          client_secret: clientSecret.trim() ? clientSecret.trim() : null,
+        })
+      );
       setClientSecret("");
       setShowOauth(false);
       toast.success("Google OAuth credentials saved");
@@ -187,8 +281,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </div>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white">Settings</h1>
           <p className="mt-1.5 max-w-xl text-xs leading-relaxed text-neutral-500">
-            Connect your Drive, tune ignore rules, and control how snapshots are built. Everything is stored
-            locally on this machine.
+            Connect your Drive, tune snapshot rules, and decide how ProjectUp runs in the background.
+            Everything is stored locally on this machine.
           </p>
         </div>
 
@@ -534,6 +628,187 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </div>
           </section>
 
+          {/* Automation */}
+          <section className="relative overflow-hidden rounded-2xl border border-white/[0.06] bg-[#030604] p-5">
+            <div className="pointer-events-none absolute -right-20 -top-20 h-48 w-48 rounded-full bg-primary/[0.05] blur-3xl" />
+            <div className="relative flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/[0.07] bg-white/[0.03] text-primary">
+                <Clock3 className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-sm font-semibold text-white">Automation & background</h2>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-500">
+                  Keep snapshots current without opening the app, and choose how ProjectUp behaves when
+                  you minimize or close it.
+                </p>
+              </div>
+            </div>
+
+            <div className="relative mt-4 space-y-3">
+              <div className="rounded-xl border border-white/[0.05] bg-white/[0.015] p-3.5">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-semibold text-white">Scheduled backups</p>
+                    <p className="mt-0.5 text-[10px] leading-relaxed text-neutral-500">
+                      Each project is checked against its own last snapshot, so a recent backup in one
+                      project never delays another.
+                    </p>
+                  </div>
+                  <Switch
+                    aria-label="Enable scheduled backups"
+                    checked={autoBackupEnabled}
+                    onCheckedChange={setAutoBackupEnabled}
+                  />
+                </div>
+
+                <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-center">
+                  <div className="flex items-center gap-2 text-[10px] text-neutral-500">
+                    <Clock3 className="h-3 w-3 text-primary/60" />
+                    Run a due project every
+                  </div>
+                  <Select
+                    value={String(autoBackupInterval)}
+                    onValueChange={(value) => setAutoBackupInterval(Number(value))}
+                    disabled={!autoBackupEnabled}
+                  >
+                    <SelectTrigger className="h-9" aria-label="Automatic backup interval">
+                      <SelectValue placeholder="Choose interval" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="6">Every 6 hours</SelectItem>
+                      <SelectItem value="12">Every 12 hours</SelectItem>
+                      <SelectItem value="24">Every day</SelectItem>
+                      <SelectItem value="72">Every 3 days</SelectItem>
+                      <SelectItem value="168">Every week</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <p className="mt-2 text-[10px] leading-relaxed text-neutral-600">
+                  Runs only while ProjectUp is open, including when it is hidden in the tray. Pair it with
+                  startup launch to keep the schedule alive after a reboot.
+                </p>
+                {autoBackupEnabled && !drive.connected ? (
+                  <p className="mt-2 rounded-lg border border-amber-500/15 bg-amber-500/[0.05] px-2.5 py-2 text-[10px] leading-relaxed text-amber-200/70">
+                    Google Drive is not connected, so scheduled uploads will wait. Connect Drive first.
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="flex items-start justify-between gap-4 rounded-xl border border-white/[0.05] bg-white/[0.015] px-3.5 py-3">
+                <div className="flex min-w-0 items-start gap-2.5">
+                  <Keyboard className="mt-0.5 h-4 w-4 shrink-0 text-primary/70" />
+                  <div>
+                    <p className="text-xs font-semibold text-white">Global backup hotkey</p>
+                    <p className="mt-0.5 text-[10px] leading-relaxed text-neutral-500">
+                      Start a bulk backup from any app, even when ProjectUp is in the tray.
+                    </p>
+                    <div className="mt-2 flex items-center gap-1.5">
+                      {["Ctrl", "Shift", "B"].map((key) => (
+                        <kbd
+                          key={key}
+                          className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-white/[0.1] bg-white/[0.04] px-1.5 font-mono text-[9px] font-semibold text-neutral-300"
+                        >
+                          {key}
+                        </kbd>
+                      ))}
+                      <span className="ml-1 text-[9px] text-neutral-600">works system-wide</span>
+                    </div>
+                  </div>
+                </div>
+                <Switch
+                  aria-label="Enable global backup hotkey"
+                  checked={hotkeyEnabled}
+                  onCheckedChange={setHotkeyEnabled}
+                />
+              </div>
+
+              <div className="overflow-hidden rounded-xl border border-white/[0.05] bg-white/[0.015]">
+                <div className="flex items-center justify-between gap-4 px-3.5 py-3">
+                  <div className="flex min-w-0 items-start gap-2.5">
+                    <Rocket className="mt-0.5 h-4 w-4 shrink-0 text-primary/70" />
+                    <div>
+                      <p className="text-xs font-semibold text-white">Launch at startup</p>
+                      <p className="mt-0.5 text-[10px] leading-relaxed text-neutral-500">
+                        Open quietly in the tray when your computer starts. Saved immediately.
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    aria-label="Launch ProjectUp at startup"
+                    checked={autostartEnabled}
+                    disabled={!isTauriRuntime() || autostartBusy}
+                    onCheckedChange={handleAutostart}
+                  />
+                </div>
+
+                <Separator />
+
+                <div className="flex items-center justify-between gap-4 px-3.5 py-3">
+                  <div className="flex min-w-0 items-start gap-2.5">
+                    <Minimize2 className="mt-0.5 h-4 w-4 shrink-0 text-primary/70" />
+                    <div>
+                      <p className="text-xs font-semibold text-white">Minimize to tray</p>
+                      <p className="mt-0.5 text-[10px] leading-relaxed text-neutral-500">
+                        The minimize button hides the window instead of sending it to the taskbar.
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    aria-label="Minimize ProjectUp to tray"
+                    checked={minimizeToTray}
+                    onCheckedChange={setMinimizeToTray}
+                  />
+                </div>
+
+                <Separator />
+
+                <div className="flex items-center justify-between gap-4 px-3.5 py-3">
+                  <div className="flex min-w-0 items-start gap-2.5">
+                    <Power className="mt-0.5 h-4 w-4 shrink-0 text-primary/70" />
+                    <div>
+                      <p className="text-xs font-semibold text-white">Close to tray</p>
+                      <p className="mt-0.5 text-[10px] leading-relaxed text-neutral-500">
+                        Closing the window keeps ProjectUp running so scheduled backups can continue.
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    aria-label="Close ProjectUp to tray"
+                    checked={closeToTray}
+                    onCheckedChange={setCloseToTray}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="relative mt-4 flex flex-wrap items-center justify-between gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setConfirmQuit(true)}
+                className="gap-1.5 text-neutral-500 hover:text-red-300"
+              >
+                <Power className="h-3.5 w-3.5" />
+                Quit ProjectUp
+              </Button>
+              <div className="flex items-center gap-2">
+                <span className="hidden text-[9px] text-neutral-600 sm:inline">
+                  Tray settings apply after saving
+                </span>
+                <Button
+                  size="sm"
+                  onClick={saveAutomation}
+                  loading={savingAutomation}
+                  className="gap-1.5"
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  Save automation
+                </Button>
+              </div>
+            </div>
+          </section>
+
           {/* Privacy */}
           <section className="rounded-2xl border border-white/[0.06] bg-[#030604] p-5">
             <div className="flex items-start gap-3">
@@ -684,6 +959,18 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         loading={disconnecting}
         onConfirm={handleDisconnect}
         icon={Unplug}
+      />
+
+      <ConfirmDialog
+        open={confirmQuit}
+        onOpenChange={setConfirmQuit}
+        title="Quit ProjectUp?"
+        description="Scheduled backups will pause until you open ProjectUp again. Any backup already in progress will stop."
+        confirmLabel="Quit app"
+        destructive
+        loading={quitting}
+        onConfirm={handleQuit}
+        icon={Power}
       />
 
       <OAuthSetupGuide open={guideOpen} onOpenChange={setGuideOpen} onOpenUrl={onOpenUrl} />

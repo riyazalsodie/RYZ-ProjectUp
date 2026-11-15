@@ -52,6 +52,11 @@ export interface AppSettings {
   compression_level: number;
   respect_gitignore: boolean;
   extra_ignore_patterns: string[];
+  auto_backup_enabled: boolean;
+  auto_backup_interval_hours: number;
+  close_to_tray: boolean;
+  minimize_to_tray: boolean;
+  global_hotkey_enabled: boolean;
 }
 
 export interface AppSnapshot {
@@ -71,6 +76,11 @@ export interface SettingsInput {
   compression_level: number;
   respect_gitignore: boolean;
   extra_ignore_patterns: string[];
+  auto_backup_enabled: boolean;
+  auto_backup_interval_hours: number;
+  close_to_tray: boolean;
+  minimize_to_tray: boolean;
+  global_hotkey_enabled: boolean;
   client_id?: string | null;
   client_secret?: string | null;
 }
@@ -108,6 +118,13 @@ export interface RestoreProgress {
 export interface RestoreResult {
   destination: string;
   file_count: number;
+}
+
+export interface AutoBackupEvent {
+  project_name: string;
+  status: "started" | "success" | "error" | "cancelled";
+  message: string;
+  record: BackupRecord | null;
 }
 
 export interface BackupJobState {

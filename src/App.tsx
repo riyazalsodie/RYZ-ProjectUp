@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
+import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import { Toaster, toast } from "sonner";
 import { AlertTriangle, FolderGit2, RefreshCw } from "lucide-react";
 import {
   AppSnapshot,
+  AutoBackupEvent,
   BackupJobState,
   BackupProgress,
   BackupRecord,
@@ -20,7 +23,7 @@ import {
 } from "./types";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "@/utils/format";
-import { useWindowControls } from "@/hooks/useWindowControls";
+import { isTauriRuntime, useWindowControls } from "@/hooks/useWindowControls";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectsPage } from "./pages/ProjectsPage";
@@ -34,6 +37,8 @@ import { DeleteBackupDialog } from "./components/DeleteBackupDialog";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { Button } from "./components/ui/button";
 
+const BACKUP_HOTKEY = "CommandOrControl+Shift+B";
+
 const initialProgress = (jobId: string): BackupProgress => ({
   job_id: jobId,
   phase: "scanning",
@@ -46,7 +51,7 @@ const initialProgress = (jobId: string): BackupProgress => ({
 });
 
 const App: React.FC = () => {
-  const { isMaximized, minimize, toggleMaximize, close } = useWindowControls();
+  const { isMaximized, minimize, hide, toggleMaximize, close } = useWindowControls();
 
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -66,6 +71,8 @@ const App: React.FC = () => {
   const [bulkBackup, setBulkBackup] = useState<BulkBackupState | null>(null);
   const bulkCancelRef = useRef(false);
   const bulkRunningRef = useRef(false);
+  const [autoBackupProject, setAutoBackupProject] = useState<string | null>(null);
+  const backupAllRef = useRef<() => Promise<void> | void>(() => undefined);
 
   const [driveDialogOpen, setDriveDialogOpen] = useState(false);
   const [driveConnecting, setDriveConnecting] = useState(false);
@@ -156,6 +163,56 @@ const App: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
+
+    listen<AutoBackupEvent>("auto-backup", (event) => {
+      const payload = event.payload;
+      if (payload.status === "started") {
+        setAutoBackupProject(payload.project_name);
+        return;
+      }
+
+      setAutoBackupProject((current) =>
+        current === payload.project_name ? null : current
+      );
+
+      if (payload.status === "success") {
+        toast.success("Automatic backup complete", {
+          description: `${payload.project_name} · ${
+            payload.record?.file_name ?? "Snapshot uploaded"
+          }`,
+          id: `auto-backup-${payload.project_name}`,
+        });
+        void safeRefresh();
+      } else if (payload.status === "error") {
+        toast.error("Automatic backup failed", {
+          description: `${payload.project_name}: ${payload.message}`,
+          id: `auto-backup-${payload.project_name}`,
+        });
+        void safeRefresh();
+      } else if (payload.status === "cancelled") {
+        toast.info("Automatic backup stopped", {
+          description: payload.project_name,
+          id: `auto-backup-${payload.project_name}`,
+        });
+        void safeRefresh();
+      }
+    })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch((err) => console.error("Failed to register auto-backup listener", err));
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [safeRefresh]);
+
   const handleAddProject = async () => {
     try {
       const selected = await open({
@@ -237,6 +294,12 @@ const App: React.FC = () => {
       toast.info("A bulk backup is already running");
       return;
     }
+    if (autoBackupProject) {
+      toast.info("An automatic backup is already running", {
+        description: autoBackupProject,
+      });
+      return;
+    }
     if (!snapshot?.drive.connected) {
       toast.error("Connect Google Drive first", {
         description: "ProjectUp needs an authorized Drive account to upload snapshots.",
@@ -305,6 +368,12 @@ const App: React.FC = () => {
 
   const handleBackupAll = async () => {
     if (!snapshot || bulkRunningRef.current || backupJob?.status === "running" || restoreJob?.status === "running") {
+      return;
+    }
+    if (autoBackupProject) {
+      toast.info("An automatic backup is already running", {
+        description: autoBackupProject,
+      });
       return;
     }
     if (!snapshot.drive.connected) {
@@ -377,6 +446,110 @@ const App: React.FC = () => {
       toast.info("Stopping bulk backup…");
     } catch (err) {
       toast.error("Could not cancel bulk backup", { description: errorMessage(err) });
+    }
+  };
+
+  const handleCancelAutoBackup = async () => {
+    try {
+      await invoke("cancel_backup");
+      toast.info("Stopping automatic backup…");
+    } catch (err) {
+      toast.error("Could not stop automatic backup", {
+        description: errorMessage(err),
+      });
+    }
+  };
+
+  useEffect(() => {
+    backupAllRef.current = handleBackupAll;
+  });
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
+
+    listen("tray-backup-all", () => {
+      setView("projects");
+      void backupAllRef.current();
+    })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch((err) => console.error("Failed to register tray action listener", err));
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriRuntime() || !snapshot?.settings.global_hotkey_enabled) return;
+
+    let cancelled = false;
+    let registered = false;
+    const setup = async () => {
+      try {
+        await register(BACKUP_HOTKEY, async (event) => {
+          if (event.state !== "Pressed") return;
+          try {
+            const win = getCurrentWindow();
+            await win.unminimize();
+            await win.show();
+            await win.setFocus();
+          } catch {
+            /* noop */
+          }
+          setView("projects");
+          void backupAllRef.current();
+        });
+        registered = true;
+
+        if (cancelled) {
+          await unregister(BACKUP_HOTKEY).catch(() => undefined);
+          registered = false;
+        }
+      } catch (err) {
+        if (cancelled) return;
+        console.error("Global backup hotkey registration failed", err);
+        toast.error("Backup hotkey unavailable", {
+          description:
+            "Ctrl+Shift+B is already used by another app. Disable the hotkey here or close the other app.",
+          id: "global-hotkey-error",
+        });
+      }
+    };
+
+    // Deferring one tick avoids React StrictMode's mount/unmount pass
+    // unregistering the shortcut that the second mount just registered.
+    const timer = window.setTimeout(() => {
+      void setup();
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      if (registered) {
+        unregister(BACKUP_HOTKEY).catch(() => undefined);
+      }
+    };
+  }, [snapshot?.settings.global_hotkey_enabled]);
+
+  const handleMinimize = useCallback(() => {
+    if (snapshot?.settings.minimize_to_tray) {
+      void hide();
+    } else {
+      void minimize();
+    }
+  }, [snapshot?.settings.minimize_to_tray, hide, minimize]);
+
+  const handleQuit = async () => {
+    try {
+      await invoke("quit_app");
+    } catch (err) {
+      toast.error("Could not quit ProjectUp", { description: errorMessage(err) });
     }
   };
 
@@ -481,6 +654,11 @@ const App: React.FC = () => {
             compression_level: s.compression_level,
             respect_gitignore: s.respect_gitignore,
             extra_ignore_patterns: s.extra_ignore_patterns,
+            auto_backup_enabled: s.auto_backup_enabled,
+            auto_backup_interval_hours: s.auto_backup_interval_hours,
+            close_to_tray: s.close_to_tray,
+            minimize_to_tray: s.minimize_to_tray,
+            global_hotkey_enabled: s.global_hotkey_enabled,
             client_id: clientId,
             client_secret: clientSecret || null,
           },
@@ -544,13 +722,15 @@ const App: React.FC = () => {
     }
   };
 
-  const statusLabel = bulkBackup
-    ? `Backing up ${bulkBackup.projectName} (${bulkBackup.current + 1}/${bulkBackup.total})`
-    : backupJob?.status === "running"
-      ? `Backing up ${backupJob.project.name}`
-      : restoreJob?.status === "running"
-        ? "Restoring snapshot"
-        : null;
+  const statusLabel = autoBackupProject
+    ? `Auto backup: ${autoBackupProject}`
+    : bulkBackup
+      ? `Backing up ${bulkBackup.projectName} (${bulkBackup.current + 1}/${bulkBackup.total})`
+      : backupJob?.status === "running"
+        ? `Backing up ${backupJob.project.name}`
+        : restoreJob?.status === "running"
+          ? "Restoring snapshot"
+          : null;
 
   if (loading) {
     return (
@@ -617,7 +797,7 @@ const App: React.FC = () => {
       >
         <TitleBar
           isMaximized={isMaximized}
-          onMinimize={minimize}
+          onMinimize={handleMinimize}
           onToggleMaximize={toggleMaximize}
           onClose={close}
           statusLabel={statusLabel}
@@ -652,6 +832,8 @@ const App: React.FC = () => {
                 onBackupAll={handleBackupAll}
                 onCancelBulkBackup={handleCancelBulkBackup}
                 bulkBackup={bulkBackup}
+                autoBackupProject={autoBackupProject}
+                onCancelAutoBackup={handleCancelAutoBackup}
                 onPreview={(project) => setPreviewProject(project)}
                 onReveal={handleReveal}
                 onRelink={handleRelinkProject}
@@ -687,6 +869,7 @@ const App: React.FC = () => {
                 onSyncCloud={handleSyncCloud}
                 onOpenUrl={handleOpenUrl}
                 onReveal={handleReveal}
+                onQuit={handleQuit}
               />
             )}
           </div>
