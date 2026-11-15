@@ -4,6 +4,26 @@ All notable changes to RYZ ProjectUp are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.2-beta.1] — 2026-11-15
+
+### Added
+
+- Custom global backup hotkey recorder: click **Change**, press a Ctrl/Alt/Win shortcut, and the app registers it system-wide.
+- Custom scheduled-backup interval input from 1–720 hours.
+- Custom snapshot retention input from 0–365 snapshots per project (`0` keeps everything).
+- Automatic saving for snapshot rules, schedule, hotkey and tray settings, with a visible saving/saved status.
+
+### Changed
+
+- Removed the minimize-to-tray option. The minimize button now uses normal taskbar minimize; **Close to tray** remains available.
+- Settings flush on window blur, hide, and Settings-page close so edits are not lost when leaving the page.
+
+### Fixed
+
+- Settings changed in the UI now persist across app close/reopen without requiring a Save button.
+- Custom hotkey, schedule interval and retention values survive restart.
+- The custom hotkey is re-registered from the saved value on launch.
+
 ## [0.4.1-beta.1] — 2026-11-15
 
 ### Fixed
@@ -157,3 +177,4 @@ Initial public beta.
 [0.3.0-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.3.0-beta.1
 [0.4.0-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.4.0-beta.1
 [0.4.1-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.4.1-beta.1
+[0.4.2-beta.1]: https://github.com/riyazalsodie/RYZ-ProjectUp/releases/tag/v0.4.2-beta.1

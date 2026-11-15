@@ -7,7 +7,7 @@ There is no free signing key that can be generated locally and trusted by Window
 ## What SignPath needs
 
 - A public, actively maintained repository with an OSI-approved license: this repo uses MIT.
-- At least one existing release: v0.4.1-beta.1 is published.
+- At least one existing release: v0.4.2-beta.1 is published.
 - A public code-signing policy on the project home page: see [CODE_SIGNING.md](../CODE_SIGNING.md).
 - GitHub Actions as the trusted build system.
 - MFA on GitHub and SignPath.
@@ -50,8 +50,8 @@ These steps must be completed by the repository owner. Do not paste API tokens, 
    - After approval, download the signed artifacts and verify them:
 
    ```powershell
-   signtool verify /pa /v .\RYZ.ProjectUp.0.4.1-beta.1.exe
-   signtool verify /pa /v .\RYZ.ProjectUp.0.4.1-beta.1.Setup.exe
+   signtool verify /pa /v .\RYZ.ProjectUp.0.4.2-beta.1.exe
+   signtool verify /pa /v .\RYZ.ProjectUp.0.4.2-beta.1.Setup.exe
    ```
 
 6. **Publish signed assets**
@@ -61,7 +61,7 @@ These steps must be completed by the repository owner. Do not paste API tokens, 
 
 ## Current status
 
-The v0.4.1-beta.1 artifacts on GitHub are unsigned while SignPath onboarding is pending. Signing must not be claimed until the SignPath-signed artifacts are attached and verified.
+The v0.4.2-beta.1 artifacts on GitHub are unsigned while SignPath onboarding is pending. Signing must not be claimed until the SignPath-signed artifacts are attached and verified.
 
 ## References
 

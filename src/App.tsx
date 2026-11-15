@@ -51,7 +51,7 @@ const initialProgress = (jobId: string): BackupProgress => ({
 });
 
 const App: React.FC = () => {
-  const { isMaximized, minimize, hide, toggleMaximize, close } = useWindowControls();
+  const { isMaximized, minimize, toggleMaximize, close } = useWindowControls();
 
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,6 +73,7 @@ const App: React.FC = () => {
   const bulkRunningRef = useRef(false);
   const [autoBackupProject, setAutoBackupProject] = useState<string | null>(null);
   const backupAllRef = useRef<() => Promise<void> | void>(() => undefined);
+  const hotkeyRecordingRef = useRef(false);
 
   const [driveDialogOpen, setDriveDialogOpen] = useState(false);
   const [driveConnecting, setDriveConnecting] = useState(false);
@@ -485,6 +486,8 @@ const App: React.FC = () => {
     };
   }, []);
 
+  const activeHotkey = snapshot?.settings.global_hotkey || BACKUP_HOTKEY;
+
   useEffect(() => {
     if (!isTauriRuntime() || !snapshot?.settings.global_hotkey_enabled) return;
 
@@ -492,8 +495,8 @@ const App: React.FC = () => {
     let registered = false;
     const setup = async () => {
       try {
-        await register(BACKUP_HOTKEY, async (event) => {
-          if (event.state !== "Pressed") return;
+        await register(activeHotkey, async (event) => {
+          if (event.state !== "Pressed" || hotkeyRecordingRef.current) return;
           try {
             const win = getCurrentWindow();
             await win.unminimize();
@@ -508,15 +511,14 @@ const App: React.FC = () => {
         registered = true;
 
         if (cancelled) {
-          await unregister(BACKUP_HOTKEY).catch(() => undefined);
+          await unregister(activeHotkey).catch(() => undefined);
           registered = false;
         }
       } catch (err) {
         if (cancelled) return;
         console.error("Global backup hotkey registration failed", err);
         toast.error("Backup hotkey unavailable", {
-          description:
-            "Ctrl+Shift+B is already used by another app. Disable the hotkey here or close the other app.",
+          description: `${activeHotkey} is already used by another app. Choose a different shortcut in Settings or disable the hotkey.`,
           id: "global-hotkey-error",
         });
       }
@@ -532,18 +534,10 @@ const App: React.FC = () => {
       cancelled = true;
       window.clearTimeout(timer);
       if (registered) {
-        unregister(BACKUP_HOTKEY).catch(() => undefined);
+        unregister(activeHotkey).catch(() => undefined);
       }
     };
-  }, [snapshot?.settings.global_hotkey_enabled]);
-
-  const handleMinimize = useCallback(() => {
-    if (snapshot?.settings.minimize_to_tray) {
-      void hide();
-    } else {
-      void minimize();
-    }
-  }, [snapshot?.settings.minimize_to_tray, hide, minimize]);
+  }, [snapshot?.settings.global_hotkey_enabled, activeHotkey]);
 
   const handleQuit = async () => {
     try {
@@ -657,8 +651,8 @@ const App: React.FC = () => {
             auto_backup_enabled: s.auto_backup_enabled,
             auto_backup_interval_hours: s.auto_backup_interval_hours,
             close_to_tray: s.close_to_tray,
-            minimize_to_tray: s.minimize_to_tray,
             global_hotkey_enabled: s.global_hotkey_enabled,
+            global_hotkey: s.global_hotkey,
             client_id: clientId,
             client_secret: clientSecret || null,
           },
@@ -797,7 +791,7 @@ const App: React.FC = () => {
       >
         <TitleBar
           isMaximized={isMaximized}
-          onMinimize={handleMinimize}
+          onMinimize={minimize}
           onToggleMaximize={toggleMaximize}
           onClose={close}
           statusLabel={statusLabel}
@@ -870,6 +864,9 @@ const App: React.FC = () => {
                 onOpenUrl={handleOpenUrl}
                 onReveal={handleReveal}
                 onQuit={handleQuit}
+                onHotkeyRecordingChange={(recording) => {
+                  hotkeyRecordingRef.current = recording;
+                }}
               />
             )}
           </div>

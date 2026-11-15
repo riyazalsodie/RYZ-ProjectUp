@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/riyazalsodie/RYZ-ProjectUp/releases"><img alt="Status: Beta" src="https://img.shields.io/badge/status-beta-00ff88?style=flat-square" /></a>
   <a href="https://github.com/riyazalsodie/RYZ-ProjectUp/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/riyazalsodie/RYZ-ProjectUp/actions/workflows/ci.yml/badge.svg" /></a>
-  <img alt="Version 0.4.1-beta.1" src="https://img.shields.io/badge/version-0.4.1--beta.1-00ff88?style=flat-square" />
+  <img alt="Version 0.4.2-beta.1" src="https://img.shields.io/badge/version-0.4.2--beta.1-00ff88?style=flat-square" />
   <img alt="Platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0b0f0d?style=flat-square" />
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white" />
   <img alt="Rust" src="https://img.shields.io/badge/Rust-1.88%2B-000000?style=flat-square&logo=rust" />
@@ -55,14 +55,14 @@ Select a folder  →  Read ignore rules  →  Build zip locally  →  Upload to 
 | **Ignore Inspector** | See exactly what will go into a snapshot, what will be skipped, why it was skipped, and how much space is saved. |
 | **Direct Google Drive uploads** | Streams a compressed snapshot to your own Drive folder. No RYZ cloud in the middle. |
 | **OAuth 2.0 + PKCE** | Connects through a loopback redirect and your own Desktop OAuth client. Tokens never pass through a third party. |
-| **Snapshot retention** | Keep the last N backups per project — older Drive files are cleaned up automatically. |
+| **Snapshot retention** | Set any snapshot count from 0–365 per project — older Drive files are cleaned up automatically. |
 | **Restore anywhere** | Download any snapshot and extract it into a fresh folder. Zip-slip protected. |
 | **Backup history** | Search, open in Drive, restore or delete every snapshot from one place. |
 | **Bulk backups** | Back up every available project in one run, with a live “x / y” indicator and a stop control. |
-| **Scheduled backups** | Set one interval from 6 hours to a week. Each project is checked against its own newest snapshot, so a recent backup in one project never blocks another. |
-| **System tray mode** | Minimize or close to the tray, reopen from the tray icon, or start **Back up all** from its menu. ProjectUp keeps a single instance and restores the existing window when launched again. |
+| **Scheduled backups** | Set any custom interval from 1–720 hours. Each project is checked against its own newest snapshot, so a recent backup in one project never blocks another. |
+| **System tray mode** | Close to the tray, reopen from the tray icon, or start **Back up all** from its menu. The minimize button still minimizes normally. ProjectUp keeps a single instance and restores the existing window when launched again. |
 | **Launch at startup** | Start quietly in the tray at login so due snapshots can run without opening the dashboard. |
-| **Global backup hotkey** | Press `Ctrl+Shift+B` from any app to bring ProjectUp forward and run **Back up all**. It can be disabled in Settings. |
+| **Custom backup hotkey** | Click **Change**, press any Ctrl/Alt/Win shortcut, and use it from any app to bring ProjectUp forward and run **Back up all**. It can be disabled in Settings. |
 | **Drive vault index** | Projects, original folders and snapshot history are saved to a private `ryz-projectup-vault.json` in your Drive folder. Connect from a new PC and the whole vault comes back. |
 | **Encrypted credentials** | OAuth secrets and refresh tokens live in a `secrets.bin` blob encrypted with Windows DPAPI — never in plain settings files. |
 | **Relink on a new PC** | Restored projects whose folders moved show a **Folder missing** warning and a one-click **Relink folder** action — history is kept. |
@@ -96,10 +96,12 @@ The built-in guide covers creating the Google Cloud project, enabling the Drive 
 
 Open **Settings → Automation & background** to configure:
 
-- **Scheduled backups** — pick a 6-hour, 12-hour, daily, 3-day or weekly interval. Each project is evaluated independently against its own latest snapshot. The schedule only runs while ProjectUp is open; the background pass checks every five minutes.
+- **Scheduled backups** — enter any interval from 1–720 hours. Each project is evaluated independently against its own latest snapshot. The schedule only runs while ProjectUp is open; the background pass checks every five minutes.
+- **Custom snapshot retention** — enter any count from 0–365 per project. `0` keeps every snapshot; older Drive files are removed automatically after an upload.
 - **Launch at startup** — starts the app minimized to the tray at login. This is saved immediately through the operating system, not in the vault.
-- **Minimize to tray / Close to tray** — keep the process alive when you use the window controls. The close setting applies after you press **Save automation**.
-- **Global backup hotkey** — `Ctrl+Shift+B` runs **Back up all** system-wide and brings the window forward. It is enabled by default and can be switched off if the combination is already in use.
+- **Close to tray** — keeps the process alive when you close the window. The minimize button stays a normal taskbar minimize.
+- **Custom backup hotkey** — click **Change**, press a Ctrl/Alt/Win shortcut, and it is registered system-wide. It is enabled by default and can be switched off if the combination is already in use.
+- **Automatic saving** — snapshot rules, schedule, hotkey and tray changes save automatically. A status line confirms when changes are saved.
 - **Quit ProjectUp** — exits fully. If you use close-to-tray, this is the explicit way to stop the process and pause the schedule.
 
 Only one ProjectUp process runs at a time. Launching the app again (without `--hidden`) brings the existing tray window forward instead of starting a second scheduler. The tray menu also has **Open ProjectUp**, **Back up all now** and **Quit ProjectUp**.
@@ -112,8 +114,8 @@ Grab the latest **beta** from the [Releases page](https://github.com/riyazalsodi
 
 | Build | File | Notes |
 | --- | --- | --- |
-| Windows installer | `RYZ.ProjectUp.0.4.1-beta.1.Setup.exe` | NSIS, per-user install, no admin required |
-| Windows portable | `RYZ.ProjectUp.0.4.1-beta.1.exe` | Run from any folder |
+| Windows installer | `RYZ.ProjectUp.0.4.2-beta.1.Setup.exe` | NSIS, per-user install, no admin required |
+| Windows portable | `RYZ.ProjectUp.0.4.2-beta.1.exe` | Run from any folder |
 
 **Requirements:** Windows 10/11 with the WebView2 runtime (preinstalled on modern Windows). macOS and Linux build from source; beta testing is currently Windows-first.
 
@@ -129,7 +131,7 @@ Grab the latest **beta** from the [Releases page](https://github.com/riyazalsodi
 4. Click **Connect Google Drive** and follow the in-app guide (one-time OAuth setup).
 5. Click **Back up** on any project.
 6. Open **Backup History** to restore a snapshot or jump to the file in Google Drive.
-7. Optional: open **Settings → Automation & background** and enable scheduled backups, startup launch or tray mode.
+7. Optional: open **Settings → Automation & background** and enable scheduled backups, startup launch or close-to-tray.
 
 ProjectUp creates its Drive folder (`RYZ ProjectUp` by default) on the first backup.
 
@@ -354,10 +356,12 @@ This is the first public beta. What works today:
 - Backup history, restore and delete
 - Drive vault index: restore projects + history on a new PC
 - Relink missing project folders after moving PCs
-- Scheduled backups with independent per-project due checks
-- System tray mode, launch at startup and minimize/close-to-tray controls
+- Scheduled backups with independent per-project due checks and custom 1–720 hour intervals
+- Custom snapshot retention from 0–365 per project
+- System tray mode, launch at startup and close-to-tray
 - Single-instance tray app; relaunching reveals the existing window
-- Global `Ctrl+Shift+B` backup hotkey
+- Custom global backup hotkey recorder
+- Automatic saving for rules, schedule, hotkey and tray settings
 - In-app Google OAuth setup guide
 - OLED desktop UI and native window controls
 

@@ -14,6 +14,7 @@ use crate::drive::{self, DriveClient};
 use crate::models::{
     now_iso, AppSnapshot, AutoBackupEvent, BackupProgressEvent, BackupRecord, DriveStatus, Project,
     ProjectView, RestoreProgressEvent, RestoreResult, ScanPreview, SettingsInput,
+    DEFAULT_GLOBAL_HOTKEY, MAX_AUTO_BACKUP_INTERVAL_HOURS,
 };
 use crate::scanner;
 use crate::state::AppState;
@@ -49,7 +50,17 @@ fn is_backup_due(last_backup: Option<&str>, interval_hours: u32, now: DateTime<L
         return true;
     };
     let elapsed = now.signed_duration_since(last_backup.with_timezone(&Local));
-    elapsed.num_seconds() >= interval_hours.clamp(1, 168) as i64 * 3600
+    elapsed.num_seconds()
+        >= interval_hours.clamp(1, MAX_AUTO_BACKUP_INTERVAL_HOURS) as i64 * 3600
+}
+
+fn sanitize_hotkey(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        DEFAULT_GLOBAL_HOTKEY.to_string()
+    } else {
+        trimmed.chars().take(64).collect()
+    }
 }
 
 fn human_bytes(bytes: u64) -> String {
@@ -452,10 +463,12 @@ pub fn save_settings(
             .filter(|line| !line.is_empty())
             .collect();
         inner.settings.auto_backup_enabled = input.auto_backup_enabled;
-        inner.settings.auto_backup_interval_hours = input.auto_backup_interval_hours.clamp(1, 168);
+        inner.settings.auto_backup_interval_hours = input
+            .auto_backup_interval_hours
+            .clamp(1, MAX_AUTO_BACKUP_INTERVAL_HOURS);
         inner.settings.close_to_tray = input.close_to_tray;
-        inner.settings.minimize_to_tray = input.minimize_to_tray;
         inner.settings.global_hotkey_enabled = input.global_hotkey_enabled;
+        inner.settings.global_hotkey = sanitize_hotkey(&input.global_hotkey);
 
         if credentials_changed {
             inner.tokens = None;
@@ -922,7 +935,10 @@ pub(crate) fn auto_backup_cycle(app: &AppHandle) {
         });
         (
             inner.settings.auto_backup_enabled,
-            inner.settings.auto_backup_interval_hours.clamp(1, 168),
+            inner
+                .settings
+                .auto_backup_interval_hours
+                .clamp(1, MAX_AUTO_BACKUP_INTERVAL_HOURS),
             drive_connected,
             inner.projects.clone(),
         )
@@ -1376,5 +1392,24 @@ mod tests {
         let two_hours_ago = (now - Duration::hours(2)).to_rfc3339();
         // An interval below one hour is raised to one hour.
         assert!(is_backup_due(Some(&two_hours_ago), 0, now));
+
+        let seven_hundred_hours_ago = (now - Duration::hours(700)).to_rfc3339();
+        assert!(!is_backup_due(Some(&seven_hundred_hours_ago), 999, now));
+
+        let seven_hundred_twenty_one_hours_ago = (now - Duration::hours(721)).to_rfc3339();
+        assert!(is_backup_due(
+            Some(&seven_hundred_twenty_one_hours_ago),
+            999,
+            now
+        ));
+    }
+
+    #[test]
+    fn empty_hotkeys_fall_back_to_the_default() {
+        assert_eq!(sanitize_hotkey("   "), DEFAULT_GLOBAL_HOTKEY);
+        assert_eq!(
+            sanitize_hotkey("CommandOrControl+Alt+KeyK"),
+            "CommandOrControl+Alt+KeyK"
+        );
     }
 }

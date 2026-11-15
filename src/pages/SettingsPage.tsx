@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   BookOpen,
@@ -15,7 +15,6 @@ import {
   Keyboard,
   Link2Off,
   Lock,
-  Minimize2,
   Power,
   RefreshCw,
   Rocket,
@@ -28,6 +27,7 @@ import {
 import { toast } from "sonner";
 import { AppSnapshot, SettingsInput } from "@/types";
 import { isTauriRuntime } from "@/hooks/useWindowControls";
+import { HotkeyRecorder } from "@/components/HotkeyRecorder";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +56,7 @@ interface SettingsPageProps {
   onOpenUrl: (url: string) => void;
   onReveal: (path: string) => void;
   onQuit: () => Promise<void>;
+  onHotkeyRecordingChange: (recording: boolean) => void;
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({
@@ -67,6 +68,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onOpenUrl,
   onReveal,
   onQuit,
+  onHotkeyRecordingChange,
 }) => {
   const { settings, drive, data_dir } = snapshot;
 
@@ -79,9 +81,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [autoBackupInterval, setAutoBackupInterval] = useState(
     settings.auto_backup_interval_hours
   );
-  const [minimizeToTray, setMinimizeToTray] = useState(settings.minimize_to_tray);
   const [closeToTray, setCloseToTray] = useState(settings.close_to_tray);
   const [hotkeyEnabled, setHotkeyEnabled] = useState(settings.global_hotkey_enabled);
+  const [globalHotkey, setGlobalHotkey] = useState(settings.global_hotkey);
 
   const [clientId, setClientId] = useState(settings.client_id);
   const [clientSecret, setClientSecret] = useState("");
@@ -98,7 +100,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [autostartBusy, setAutostartBusy] = useState(false);
   const [confirmQuit, setConfirmQuit] = useState(false);
   const [quitting, setQuitting] = useState(false);
+  const [autoSaveState, setAutoSaveState] = useState<"idle" | "saving" | "saved" | "error">(
+    "idle"
+  );
   const settingsKey = JSON.stringify(settings);
+  const saveRef = useRef(onSave);
+  const latestInputRef = useRef<SettingsInput | null>(null);
+  const initialAutoSave = useRef(true);
 
   useEffect(() => {
     setFolderName(settings.folder_name);
@@ -108,14 +116,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setExtraPatterns(settings.extra_ignore_patterns.join("\n"));
     setAutoBackupEnabled(settings.auto_backup_enabled);
     setAutoBackupInterval(settings.auto_backup_interval_hours);
-    setMinimizeToTray(settings.minimize_to_tray);
     setCloseToTray(settings.close_to_tray);
     setHotkeyEnabled(settings.global_hotkey_enabled);
-    setClientId(settings.client_id);
+    setGlobalHotkey(settings.global_hotkey);
     // Do not discard unsaved edits when a background backup refreshes the
     // snapshot but the persisted settings are unchanged.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsKey]);
+
+  useEffect(() => {
+    setClientId(settings.client_id);
+  }, [settings.client_id]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -142,19 +153,103 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     auto_backup_enabled: autoBackupEnabled,
     auto_backup_interval_hours: autoBackupInterval,
     close_to_tray: closeToTray,
-    minimize_to_tray: minimizeToTray,
     global_hotkey_enabled: hotkeyEnabled,
+    global_hotkey: globalHotkey,
     client_id: null,
     client_secret: null,
     ...overrides,
   });
 
+  useEffect(() => {
+    saveRef.current = onSave;
+  });
+
+  useEffect(() => {
+    latestInputRef.current = buildInput();
+  });
+
+  useEffect(() => {
+    if (initialAutoSave.current) {
+      initialAutoSave.current = false;
+      return;
+    }
+
+    setAutoSaveState("idle");
+    const input = buildInput();
+    const timer = window.setTimeout(() => {
+      setAutoSaveState("saving");
+      saveRef
+        .current(input)
+        .then(() => setAutoSaveState("saved"))
+        .catch((err) => {
+          setAutoSaveState("error");
+          toast.error("Could not save settings", {
+            description: String(err),
+            id: "settings-autosave",
+          });
+        });
+    }, 600);
+
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    folderName,
+    retention,
+    compression,
+    respectGitignore,
+    extraPatterns,
+    autoBackupEnabled,
+    autoBackupInterval,
+    closeToTray,
+    hotkeyEnabled,
+    globalHotkey,
+  ]);
+
+  useEffect(() => {
+    const flush = () => {
+      const input = latestInputRef.current;
+      if (!input) return;
+      saveRef.current(input).catch((err) => {
+        console.error("Could not flush settings", err);
+      });
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+
+    window.addEventListener("blur", flush);
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      window.removeEventListener("blur", flush);
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      flush();
+    };
+  }, []);
+
+  const persistNow = async (overrides: Partial<SettingsInput> = {}) => {
+    try {
+      await saveRef.current(buildInput(overrides));
+      setAutoSaveState("saved");
+    } catch (err) {
+      setAutoSaveState("error");
+      toast.error("Could not save settings", {
+        description: String(err),
+        id: "settings-autosave",
+      });
+    }
+  };
+
   const saveRules = async () => {
     setSavingRules(true);
     try {
       await onSave(buildInput());
+      setAutoSaveState("saved");
       toast.success("Backup rules saved");
     } catch (err) {
+      setAutoSaveState("error");
       toast.error("Could not save settings", { description: String(err) });
     } finally {
       setSavingRules(false);
@@ -165,12 +260,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setSavingAutomation(true);
     try {
       await onSave(buildInput());
+      setAutoSaveState("saved");
       toast.success("Automation settings saved", {
         description: autoBackupEnabled
           ? "Scheduled backups will run while ProjectUp is open."
           : undefined,
       });
     } catch (err) {
+      setAutoSaveState("error");
       toast.error("Could not save automation settings", { description: String(err) });
     } finally {
       setSavingAutomation(false);
@@ -284,6 +381,33 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             Connect your Drive, tune snapshot rules, and decide how ProjectUp runs in the background.
             Everything is stored locally on this machine.
           </p>
+          <div className="mt-2.5 flex items-center gap-1.5 text-[10px]">
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full",
+                autoSaveState === "error"
+                  ? "bg-red-400"
+                  : autoSaveState === "saving"
+                    ? "animate-pulse bg-amber-300"
+                    : "bg-primary/70"
+              )}
+            />
+            <span
+              className={cn(
+                "text-neutral-600",
+                autoSaveState === "saved" && "text-primary/70",
+                autoSaveState === "error" && "text-red-300/80"
+              )}
+            >
+              {autoSaveState === "saving"
+                ? "Saving changes…"
+                : autoSaveState === "saved"
+                  ? "Saved automatically"
+                  : autoSaveState === "error"
+                    ? "Save failed — press a Save button below"
+                    : "Changes save automatically"}
+            </span>
+          </div>
         </div>
 
         <div className="mt-6 space-y-4">
@@ -566,22 +690,31 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
                 <Label htmlFor="retention">Snapshots kept per project</Label>
-                <Select
-                  value={String(retention)}
-                  onValueChange={(value) => setRetention(Number(value))}
-                >
-                  <SelectTrigger id="retention" className="mt-1.5">
-                    <SelectValue placeholder="Choose retention" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0">Unlimited</SelectItem>
-                    <SelectItem value="3">Last 3 snapshots</SelectItem>
-                    <SelectItem value="5">Last 5 snapshots</SelectItem>
-                    <SelectItem value="10">Last 10 snapshots</SelectItem>
-                    <SelectItem value="20">Last 20 snapshots</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="mt-1.5 text-[10px] text-neutral-600">Older Drive files are deleted after upload.</p>
+                <div className="relative mt-1.5">
+                  <Input
+                    id="retention"
+                    type="number"
+                    min={0}
+                    max={365}
+                    step={1}
+                    value={retention}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      setRetention(Number.isFinite(next) ? Math.max(0, next) : 0);
+                    }}
+                    onBlur={() =>
+                      setRetention((value) => Math.min(365, Math.max(0, Math.round(value))))
+                    }
+                    className="pr-20"
+                  />
+                  <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-[9px] text-neutral-600">
+                    snapshots
+                  </span>
+                </div>
+                <p className="mt-1.5 text-[10px] text-neutral-600">
+                  Enter any number from 0–365. 0 keeps every snapshot; older Drive files are deleted after
+                  upload.
+                </p>
               </div>
               <div>
                 <Label htmlFor="compression">Zip compression</Label>
@@ -657,7 +790,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   <Switch
                     aria-label="Enable scheduled backups"
                     checked={autoBackupEnabled}
-                    onCheckedChange={setAutoBackupEnabled}
+                    onCheckedChange={(value) => {
+                      setAutoBackupEnabled(value);
+                      void persistNow({ auto_backup_enabled: value });
+                    }}
                   />
                 </div>
 
@@ -666,26 +802,35 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     <Clock3 className="h-3 w-3 text-primary/60" />
                     Run a due project every
                   </div>
-                  <Select
-                    value={String(autoBackupInterval)}
-                    onValueChange={(value) => setAutoBackupInterval(Number(value))}
-                    disabled={!autoBackupEnabled}
-                  >
-                    <SelectTrigger className="h-9" aria-label="Automatic backup interval">
-                      <SelectValue placeholder="Choose interval" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="6">Every 6 hours</SelectItem>
-                      <SelectItem value="12">Every 12 hours</SelectItem>
-                      <SelectItem value="24">Every day</SelectItem>
-                      <SelectItem value="72">Every 3 days</SelectItem>
-                      <SelectItem value="168">Every week</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <div className="relative">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={720}
+                      step={1}
+                      value={autoBackupInterval}
+                      onChange={(event) => {
+                        const next = Number(event.target.value);
+                        setAutoBackupInterval(Number.isFinite(next) ? Math.max(1, next) : 1);
+                      }}
+                      onBlur={() =>
+                        setAutoBackupInterval((value) =>
+                          Math.min(720, Math.max(1, Math.round(value)))
+                        )
+                      }
+                      disabled={!autoBackupEnabled}
+                      aria-label="Automatic backup interval in hours"
+                      className="h-9 pr-14"
+                    />
+                    <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-[9px] text-neutral-600">
+                      hours
+                    </span>
+                  </div>
                 </div>
 
                 <p className="mt-2 text-[10px] leading-relaxed text-neutral-600">
-                  Runs only while ProjectUp is open, including when it is hidden in the tray. Pair it with
+                  Enter any custom interval from 1–720 hours. The scheduler checks every five minutes and
+                  runs only while ProjectUp is open, including when it is hidden in the tray. Pair it with
                   startup launch to keep the schedule alive after a reboot.
                 </p>
                 {autoBackupEnabled && !drive.connected ? (
@@ -701,25 +846,26 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   <div>
                     <p className="text-xs font-semibold text-white">Global backup hotkey</p>
                     <p className="mt-0.5 text-[10px] leading-relaxed text-neutral-500">
-                      Start a bulk backup from any app, even when ProjectUp is in the tray.
+                      Start a bulk backup from any app, even when ProjectUp is in the tray. Click Change,
+                      then press your shortcut.
                     </p>
-                    <div className="mt-2 flex items-center gap-1.5">
-                      {["Ctrl", "Shift", "B"].map((key) => (
-                        <kbd
-                          key={key}
-                          className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-white/[0.1] bg-white/[0.04] px-1.5 font-mono text-[9px] font-semibold text-neutral-300"
-                        >
-                          {key}
-                        </kbd>
-                      ))}
-                      <span className="ml-1 text-[9px] text-neutral-600">works system-wide</span>
-                    </div>
+                    <HotkeyRecorder
+                      value={globalHotkey}
+                      onChange={(value) => {
+                        setGlobalHotkey(value);
+                        void persistNow({ global_hotkey: value });
+                      }}
+                      onRecordingChange={onHotkeyRecordingChange}
+                    />
                   </div>
                 </div>
                 <Switch
                   aria-label="Enable global backup hotkey"
                   checked={hotkeyEnabled}
-                  onCheckedChange={setHotkeyEnabled}
+                  onCheckedChange={(value) => {
+                    setHotkeyEnabled(value);
+                    void persistNow({ global_hotkey_enabled: value });
+                  }}
                 />
               </div>
 
@@ -746,25 +892,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
                 <div className="flex items-center justify-between gap-4 px-3.5 py-3">
                   <div className="flex min-w-0 items-start gap-2.5">
-                    <Minimize2 className="mt-0.5 h-4 w-4 shrink-0 text-primary/70" />
-                    <div>
-                      <p className="text-xs font-semibold text-white">Minimize to tray</p>
-                      <p className="mt-0.5 text-[10px] leading-relaxed text-neutral-500">
-                        The minimize button hides the window instead of sending it to the taskbar.
-                      </p>
-                    </div>
-                  </div>
-                  <Switch
-                    aria-label="Minimize ProjectUp to tray"
-                    checked={minimizeToTray}
-                    onCheckedChange={setMinimizeToTray}
-                  />
-                </div>
-
-                <Separator />
-
-                <div className="flex items-center justify-between gap-4 px-3.5 py-3">
-                  <div className="flex min-w-0 items-start gap-2.5">
                     <Power className="mt-0.5 h-4 w-4 shrink-0 text-primary/70" />
                     <div>
                       <p className="text-xs font-semibold text-white">Close to tray</p>
@@ -776,7 +903,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   <Switch
                     aria-label="Close ProjectUp to tray"
                     checked={closeToTray}
-                    onCheckedChange={setCloseToTray}
+                    onCheckedChange={(value) => {
+                      setCloseToTray(value);
+                      void persistNow({ close_to_tray: value });
+                    }}
                   />
                 </div>
               </div>
@@ -794,7 +924,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </Button>
               <div className="flex items-center gap-2">
                 <span className="hidden text-[9px] text-neutral-600 sm:inline">
-                  Tray settings apply after saving
+                  Changes save automatically
                 </span>
                 <Button
                   size="sm"

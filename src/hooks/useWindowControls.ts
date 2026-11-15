@@ -58,15 +58,6 @@ export function useWindowControls() {
     }
   }, []);
 
-  const hide = useCallback(async () => {
-    if (!isTauriRuntime()) return;
-    try {
-      await getCurrentWindow().hide();
-    } catch {
-      /* noop */
-    }
-  }, []);
-
   const close = useCallback(async () => {
     if (!isTauriRuntime()) return;
     try {
@@ -76,7 +67,7 @@ export function useWindowControls() {
     }
   }, []);
 
-  return { isMaximized, minimize, hide, toggleMaximize, close };
+  return { isMaximized, minimize, toggleMaximize, close };
 }
 
 export { isTauriRuntime };

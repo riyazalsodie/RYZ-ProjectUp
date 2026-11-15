@@ -55,8 +55,8 @@ export interface AppSettings {
   auto_backup_enabled: boolean;
   auto_backup_interval_hours: number;
   close_to_tray: boolean;
-  minimize_to_tray: boolean;
   global_hotkey_enabled: boolean;
+  global_hotkey: string;
 }
 
 export interface AppSnapshot {
@@ -79,8 +79,8 @@ export interface SettingsInput {
   auto_backup_enabled: boolean;
   auto_backup_interval_hours: number;
   close_to_tray: boolean;
-  minimize_to_tray: boolean;
   global_hotkey_enabled: boolean;
+  global_hotkey: string;
   client_id?: string | null;
   client_secret?: string | null;
 }

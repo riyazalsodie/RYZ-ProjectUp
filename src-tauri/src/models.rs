@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_GLOBAL_HOTKEY: &str = "CommandOrControl+Shift+B";
+pub const MAX_AUTO_BACKUP_INTERVAL_HOURS: u32 = 720;
+
 pub fn now_iso() -> String {
     chrono::Local::now().to_rfc3339()
 }
@@ -87,10 +90,10 @@ pub struct Settings {
     pub auto_backup_interval_hours: u32,
     #[serde(default)]
     pub close_to_tray: bool,
-    #[serde(default)]
-    pub minimize_to_tray: bool,
     #[serde(default = "default_true")]
     pub global_hotkey_enabled: bool,
+    #[serde(default = "default_global_hotkey")]
+    pub global_hotkey: String,
 }
 
 fn default_folder_name() -> String {
@@ -111,6 +114,10 @@ fn default_true() -> bool {
 
 fn default_auto_backup_interval() -> u32 {
     24
+}
+
+fn default_global_hotkey() -> String {
+    DEFAULT_GLOBAL_HOTKEY.to_string()
 }
 
 fn default_extra_patterns() -> Vec<String> {
@@ -172,8 +179,8 @@ impl Default for Settings {
             auto_backup_enabled: false,
             auto_backup_interval_hours: default_auto_backup_interval(),
             close_to_tray: false,
-            minimize_to_tray: false,
             global_hotkey_enabled: true,
+            global_hotkey: default_global_hotkey(),
         }
     }
 }
@@ -191,10 +198,10 @@ pub struct SettingsInput {
     pub auto_backup_interval_hours: u32,
     #[serde(default)]
     pub close_to_tray: bool,
-    #[serde(default)]
-    pub minimize_to_tray: bool,
     #[serde(default = "default_true")]
     pub global_hotkey_enabled: bool,
+    #[serde(default = "default_global_hotkey")]
+    pub global_hotkey: String,
     #[serde(default)]
     pub client_id: Option<String>,
     #[serde(default)]
@@ -213,8 +220,8 @@ pub struct PublicSettings {
     pub auto_backup_enabled: bool,
     pub auto_backup_interval_hours: u32,
     pub close_to_tray: bool,
-    pub minimize_to_tray: bool,
     pub global_hotkey_enabled: bool,
+    pub global_hotkey: String,
 }
 
 impl From<&Settings> for PublicSettings {
@@ -230,8 +237,8 @@ impl From<&Settings> for PublicSettings {
             auto_backup_enabled: value.auto_backup_enabled,
             auto_backup_interval_hours: value.auto_backup_interval_hours,
             close_to_tray: value.close_to_tray,
-            minimize_to_tray: value.minimize_to_tray,
             global_hotkey_enabled: value.global_hotkey_enabled,
+            global_hotkey: value.global_hotkey.clone(),
         }
     }
 }
@@ -354,7 +361,7 @@ mod tests {
         assert!(!settings.auto_backup_enabled);
         assert_eq!(settings.auto_backup_interval_hours, 24);
         assert!(!settings.close_to_tray);
-        assert!(!settings.minimize_to_tray);
         assert!(settings.global_hotkey_enabled);
+        assert_eq!(settings.global_hotkey, DEFAULT_GLOBAL_HOTKEY);
     }
 }
